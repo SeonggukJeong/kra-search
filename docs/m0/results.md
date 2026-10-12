@@ -2,7 +2,7 @@
 
 - 상태: **개발 PC·CI 수치로 잠정 결정**. 폐쇄망 PC 진단(`kra-diag` 최신 릴리즈)·수동 점검·평가 질의 검토를 받아 확정한다.
 - 주의: 품질 관련 잠정 결정(양자화·차원·청크)은 사용자 검토 전 질의 130개와, nDCG 0.96~0.97로 상한에 가까운 평가 세트에 기댄다. 긴 문서·바이너리 HWP를 더한 평가로 M2에서 다시 확인한다.
-- 근거 자료: [results-dev.md](results-dev.md) · [eval-dev.md](eval-dev.md) · 릴리즈 [m0-diag-3](https://github.com/SeonggukJeong/kra-search/releases/tag/m0-diag-3)
+- 근거 자료: [results-dev.md](results-dev.md) · [eval-dev.md](eval-dev.md) · 릴리즈 [m0-diag-4](https://github.com/SeonggukJeong/kra-search/releases/tag/m0-diag-4)
 
 | 결정 | 규칙(스펙 §15) | 근거 수치 | 잠정 결정 | 확정에 필요한 것 |
 |---|---|---|---|---|
