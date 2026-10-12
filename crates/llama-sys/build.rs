@@ -108,6 +108,7 @@ fn main() {
         .clang_arg(format!("-I{}", src.join("ggml/include").display()))
         .allowlist_function("llama_.*")
         .allowlist_function("ggml_backend_load_all_from_path")
+        .allowlist_function("ggml_backend_dev_count")
         .allowlist_type("llama_.*")
         .allowlist_var("LLAMA_.*")
         .generate()

@@ -47,6 +47,9 @@ fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
                 let c = CString::new(d.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
                 ggml_backend_load_all_from_path(c.as_ptr());
             }
+            if ggml_backend_dev_count() == 0 {
+                return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
+            }
             llama_backend_init();
             Ok(())
         })

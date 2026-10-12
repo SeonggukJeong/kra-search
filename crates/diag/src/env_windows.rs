@@ -3,11 +3,11 @@
 
 use crate::report::{EnvInfo, HotkeyCheck};
 use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::Storage::FileSystem::{DecryptFileW, EncryptFileW, FileEncryptionStatusW};
+use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
 
-/// FileEncryptionStatusW 의 "암호화됨" 상태값(winbase.h FILE_IS_ENCRYPTED).
-const FILE_IS_ENCRYPTED: u32 = 1;
-use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+/// GetVolumeInformationW 파일 시스템 플래그: 볼륨이 EFS 를 지원함(winnt.h FILE_SUPPORTS_ENCRYPTION).
+const FILE_SUPPORTS_ENCRYPTION: u32 = 0x0002_0000;
+use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_SPACE,
 };
@@ -22,30 +22,35 @@ pub fn fill(e: &mut EnvInfo) {
     e.antivirus = antivirus();
 }
 
+/// EFS 사용 가능 여부를 **아무것도 바꾸지 않고** 확인한다(파일 암호화·인증서 생성 없음).
+/// Windows 에디션(Home은 EFS 없음) · 사용자 데이터 볼륨의 암호화 지원 · EFS 사용 안 함 정책을 읽는다.
 fn efs_probe() -> String {
-    let Some(base) = std::env::var_os("LOCALAPPDATA") else { return "error(LOCALAPPDATA 없음)".into() };
-    let dir = std::path::Path::new(&base).join("KraSearchDiag").join("efs-probe");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return "error(폴더 생성 실패)".into();
-    }
-    let h = HSTRING::from(dir.as_os_str());
-    let result = unsafe {
-        match EncryptFileW(PCWSTR(h.as_ptr())) {
-            Err(err) => format!("unsupported({:#x})", err.code().0),
-            Ok(()) => {
-                let mut status = 0u32;
-                let r = match FileEncryptionStatusW(PCWSTR(h.as_ptr()), &mut status) {
-                    Ok(()) if status == FILE_IS_ENCRYPTED => "supported".to_string(),
-                    Ok(()) => format!("unsupported(status {status})"),
-                    Err(err) => format!("error({:#x})", err.code().0),
-                };
-                let _ = DecryptFileW(PCWSTR(h.as_ptr()), None);
-                r
-            }
-        }
+    let edition = reg_sz(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion", "EditionID").unwrap_or_default();
+    let policy_off = reg_dword(HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\EFS", "EfsConfiguration") == Some(1);
+    let volume = std::env::var("LOCALAPPDATA").ok().and_then(|p| p.get(..3).map(str::to_string)).unwrap_or_else(|| "C:\\".into());
+    let mut flags = 0u32;
+    let root = HSTRING::from(volume.as_str());
+    let vol_ok = unsafe { GetVolumeInformationW(PCWSTR(root.as_ptr()), None, None, None, Some(&mut flags), None) }.is_ok()
+        && flags & FILE_SUPPORTS_ENCRYPTION != 0;
+    let home = edition.starts_with("Core");
+    let ok = vol_ok && !policy_off && !home;
+    format!(
+        "{}(에디션 {}, 볼륨 {}, 정책 {})",
+        if ok { "supported" } else { "unsupported" },
+        if edition.is_empty() { "?" } else { edition.as_str() },
+        if vol_ok { "지원" } else { "미지원" },
+        if policy_off { "사용 안 함" } else { "허용" }
+    )
+}
+
+fn reg_dword(root: HKEY, key: &str, value: &str) -> Option<u32> {
+    let (k, v) = (HSTRING::from(key), HSTRING::from(value));
+    let mut data = 0u32;
+    let mut size = 4u32;
+    let rc = unsafe {
+        RegGetValueW(root, PCWSTR(k.as_ptr()), PCWSTR(v.as_ptr()), RRF_RT_REG_DWORD, None, Some((&mut data as *mut u32).cast()), Some(&mut size))
     };
-    let _ = std::fs::remove_dir_all(dir.parent().unwrap());
-    result
+    rc.is_ok().then_some(data)
 }
 
 fn reg_sz(root: HKEY, key: &str, value: &str) -> Option<String> {

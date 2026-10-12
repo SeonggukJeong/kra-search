@@ -70,8 +70,14 @@ fn harden_dll_search() {
     use windows::Win32::System::LibraryLoader::{
         SetDefaultDllDirectories, LOAD_LIBRARY_SEARCH_APPLICATION_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
     };
+    use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX};
+    use windows::Win32::System::ErrorReporting::{WerSetFlags, WER_FAULT_REPORTING_FLAG_NOHEAP, WER_FAULT_REPORTING_NO_UI};
     unsafe {
         let _ = SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
+        // 자식 프로세스가 비정상 종료해도 오류 창을 띄우지 않고(자식에게 상속됨), 오류 보고 덤프에 힙(문서 텍스트)을 넣지 않는다.
+        // 레지스트리를 바꾸는 WerAddExcludedApplication 은 PC에 흔적을 남기므로 진단 도구에서는 쓰지 않는다.
+        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        let _ = WerSetFlags(WER_FAULT_REPORTING_NO_UI | WER_FAULT_REPORTING_FLAG_NOHEAP);
     }
 }
 
