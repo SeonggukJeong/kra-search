@@ -60,6 +60,8 @@ fn main() {
             cfg.generator("Ninja")
                 .define("CMAKE_C_COMPILER", "clang")
                 .define("CMAKE_CXX_COMPILER", "clang++")
+                .define("CMAKE_C_FLAGS", "")
+                .define("CMAKE_CXX_FLAGS", "")
                 .define("CMAKE_C_FLAGS_RELEASE", "-O3 -DNDEBUG")
                 .define("CMAKE_CXX_FLAGS_RELEASE", "-O3 -DNDEBUG");
         } else {
