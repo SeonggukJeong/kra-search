@@ -82,3 +82,23 @@ fn model_bench_runs_in_child_process() {
     assert!(v["rss_mb_after_load"].as_u64().unwrap() > 0);
     assert!(v["tokens_per_sec"][0][1].as_f64().unwrap() > 0.0);
 }
+
+#[test]
+fn report_never_contains_file_bytes() {
+    // CP949 "홍길동 응시원서" 로 시작하는 텍스트를 .hwp 로 저장한 파일
+    let dir = std::env::temp_dir().join("kra-diag-bytes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let cp949_name: [u8; 6] = [0xC8, 0xAB, 0xB1, 0xE6, 0xB5, 0xBF];
+    let mut body = cp949_name.to_vec();
+    body.extend_from_slice(b" 2025 resume text");
+    std::fs::write(dir.join("a.hwp"), &body).unwrap();
+    let out_dir = std::env::temp_dir().join("kra-diag-out5");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_kra-diag")).args(["extract-stats", "--root"]).arg(&dir).current_dir(&out_dir).status().unwrap();
+    assert!(st.success());
+    let json = std::fs::read_to_string(out_dir.join("kra-diag-report.json")).unwrap().to_lowercase();
+    for needle in ["c8ab", "b1e6", "b5bf", "abb1", "e6b5"] {
+        assert!(!json.contains(needle), "file bytes leaked as hex: {needle}");
+    }
+    assert!(json.contains("텍스트"), "text-like file should be labeled, not hex-dumped");
+}

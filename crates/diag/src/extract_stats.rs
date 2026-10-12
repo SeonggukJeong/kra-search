@@ -91,7 +91,7 @@ pub fn run(roots: &[PathBuf], tokenizer: Option<&Embedder>) -> ExtractInfo {
                 FailKind::Unsupported => x.unsupported += 1,
                 FailKind::NotContainer => {
                     x.not_container += 1;
-                    *magics.entry(magic).or_default() += 1;
+                    *magics.entry(extract::magic::report_label(&magic)).or_default() += 1;
                 }
             },
             Outcome::Timeout => x.timeout += 1,
@@ -99,7 +99,13 @@ pub fn run(roots: &[PathBuf], tokenizer: Option<&Embedder>) -> ExtractInfo {
         }
     }
     eprintln!();
-    let mut top: Vec<(String, usize)> = magics.into_iter().collect();
+    // 알 수 없는 이진 헤더는 5개 이상 같은 경우(형식 시그니처일 가능성)만 남기고 나머지는 합친다.
+    let mut merged: HashMap<String, usize> = HashMap::new();
+    for (label, n) in magics {
+        let key = if label.starts_with("기타:") && n < 5 { "기타(5건 미만)".to_string() } else { label };
+        *merged.entry(key).or_default() += n;
+    }
+    let mut top: Vec<(String, usize)> = merged.into_iter().collect();
     top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     top.truncate(10);
     x.not_container_magic_top = top;
