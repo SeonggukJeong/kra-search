@@ -5,8 +5,10 @@ set -euo pipefail
 # Windows Git Bash가 "/src/" 같은 인자를 Windows 경로로 바꾸지 않게 한다.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"
 REV="1a76570e833917d15817415a53c09ad61ab3203f"
-SPEC_VERSION=4  # sparse 목록이 바뀌면 올린다
+SPEC_VERSION=5  # sparse 목록이 바뀌면 올린다
 DIR="$(cd "$(dirname "$0")/.." && pwd)/third_party/rhwp"
+# Windows: 경로 변환을 껐으므로 git·python 이 이해하는 D:/... 형식으로 바꿔 둔다.
+if command -v cygpath >/dev/null 2>&1; then DIR="$(cygpath -m "$DIR")"; fi
 
 if [ -f "$DIR/.rev" ] && [ "$(cat "$DIR/.rev")" = "$REV-$SPEC_VERSION" ]; then
   echo "rhwp $REV already present"; exit 0
