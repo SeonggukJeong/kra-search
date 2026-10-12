@@ -54,6 +54,11 @@ fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
         .map_err(EmbedError::Backend)
 }
 
+/// 백엔드만 초기화한다(모델 없이 `system_info`를 보려 할 때).
+pub fn init(backend_dir: Option<&Path>) -> Result<(), EmbedError> {
+    init_backend(backend_dir)
+}
+
 /// llama.cpp가 선택한 CPU 기능(진단용).
 pub fn system_info() -> String {
     unsafe { CStr::from_ptr(llama_print_system_info()).to_string_lossy().into_owned() }

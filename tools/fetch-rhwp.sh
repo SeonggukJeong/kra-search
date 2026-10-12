@@ -5,7 +5,7 @@ set -euo pipefail
 # Windows Git Bash가 "/src/" 같은 인자를 Windows 경로로 바꾸지 않게 한다.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"
 REV="1a76570e833917d15817415a53c09ad61ab3203f"
-SPEC_VERSION=3  # sparse 목록이 바뀌면 올린다
+SPEC_VERSION=4  # sparse 목록이 바뀌면 올린다
 DIR="$(cd "$(dirname "$0")/.." && pwd)/third_party/rhwp"
 
 if [ -f "$DIR/.rev" ] && [ "$(cat "$DIR/.rev")" = "$REV-$SPEC_VERSION" ]; then
@@ -21,7 +21,7 @@ git -C "$DIR" checkout --quiet "$REV"
 rm -rf "$DIR/.git"
 
 # 우리 워크스페이스의 경로 의존으로 쓸 수 있게 Cargo.toml 을 다듬는다:
-# 자체 [workspace]·테스트·바이너리·예제·벤치 대상 제거(그 파일들은 받지 않았다).
+# 자체 [workspace]·[profile]·[patch]·테스트·바이너리·예제·벤치 대상 제거(그 파일들은 받지 않았다).
 python3 - "$DIR/Cargo.toml" <<'PY'
 import re, sys
 p = sys.argv[1]
@@ -30,7 +30,7 @@ out, skip = [], False
 for line in s.splitlines():
     if re.match(r"^\[(\[)?[^\]]+\]", line):
         skip = line.strip() in ("[workspace]", "[[test]]", "[[bin]]", "[[example]]", "[[bench]]", "[dev-dependencies]") \
-            or line.startswith("[workspace.")
+            or line.startswith("[workspace.") or line.startswith("[profile") or line.startswith("[patch")
     if not skip:
         out.append(line)
 s = "\n".join(out) + "\n"

@@ -1,10 +1,31 @@
-use std::{env, path::PathBuf};
+use std::path::{Path, PathBuf};
+use std::{env, process::Command};
+
+/// patches/*.patch 를 vendor/llama.cpp 에 한 번만 적용한다(이미 적용돼 있으면 건너뜀).
+fn apply_patches(src: &Path, dir: &Path) {
+    let mut patches: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "patch")).collect())
+        .unwrap_or_default();
+    patches.sort();
+    for p in patches {
+        println!("cargo:rerun-if-changed={}", p.display());
+        let git = |args: &[&str]| {
+            Command::new("git").arg("-C").arg(src).args(args).arg("--ignore-whitespace").arg(&p).status().map(|s| s.success()).unwrap_or(false)
+        };
+        if git(&["apply", "--reverse", "--check"]) {
+            continue;
+        }
+        assert!(git(&["apply"]), "failed to apply {}", p.display());
+    }
+}
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let src = manifest.join("vendor/llama.cpp");
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     println!("cargo:rerun-if-changed=wrapper.h");
+    println!("cargo:rerun-if-changed=patches");
+    apply_patches(&src, &manifest.join("patches"));
     println!("cargo:rerun-if-changed=vendor/llama.cpp/include/llama.h");
 
     let mut cfg = cmake::Config::new(&src);

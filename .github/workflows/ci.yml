@@ -7,6 +7,7 @@ jobs:
       matrix: { os: [macos-latest, windows-latest] }
     runs-on: ${{ matrix.os }}
     steps:
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with: { submodules: recursive }
       - uses: dtolnay/rust-toolchain@1.97.0
