@@ -74,6 +74,13 @@ fn main() {
         cfg.define("BUILD_SHARED_LIBS", "OFF");
     }
     let dst = cfg.build();
+    // 회귀 방지: llama.cpp 가 최적화 없이 빌드되면(실제로 Windows 에서 17배 느려졌던 문제) 빌드를 실패시킨다.
+    let cache = std::fs::read_to_string(dst.join("build").join("CMakeCache.txt")).unwrap_or_default();
+    let rel = cache.lines().find(|l| l.starts_with("CMAKE_C_FLAGS_RELEASE:")).unwrap_or("");
+    assert!(
+        ["/O2", "-O2", "-O3"].iter().any(|o| rel.contains(o)),
+        "llama.cpp would be compiled without optimization: {rel}"
+    );
     for d in ["lib", "lib64"] {
         println!("cargo:rustc-link-search=native={}", dst.join(d).display());
     }
