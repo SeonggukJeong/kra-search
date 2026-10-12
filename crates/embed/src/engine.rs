@@ -43,12 +43,14 @@ static BACKEND: OnceLock<Result<(), String>> = OnceLock::new();
 fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
     BACKEND
         .get_or_init(|| unsafe {
+            // 폴더를 지정한 경우(제품·진단 도구)에만 그 폴더에서 계산 모듈을 불러오고 개수를 확인한다.
+            // 지정하지 않으면(개발용 테스트) llama.cpp 가 모델을 불러올 때 기본 위치에서 찾는다.
             if let Some(d) = dir {
                 let c = CString::new(d.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
                 ggml_backend_load_all_from_path(c.as_ptr());
-            }
-            if ggml_backend_dev_count() == 0 {
-                return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
+                if ggml_backend_dev_count() == 0 {
+                    return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
+                }
             }
             llama_backend_init();
             Ok(())
