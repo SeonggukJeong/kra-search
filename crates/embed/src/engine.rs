@@ -195,7 +195,12 @@ impl Embedder {
                 }
             }
             batch.n_tokens = k as i32;
-            let rc = if self.encoder_only { llama_encode(self.ctx, batch) } else { llama_decode(self.ctx, batch) };
+            // 임베딩 전용 컨텍스트는 encode 로 처리한다(EmbeddingGemma 2 는 decode 를 호출하면 llama.cpp 가
+            // 경고를 찍고 encode 로 돌린다). encode 를 지원하지 않는 모델이면 decode 로 다시 시도한다.
+            let mut rc = llama_encode(self.ctx, batch);
+            if rc != 0 && !self.encoder_only {
+                rc = llama_decode(self.ctx, batch);
+            }
             if rc != 0 {
                 llama_batch_free(batch);
                 return Err(EmbedError::Decode(rc));
