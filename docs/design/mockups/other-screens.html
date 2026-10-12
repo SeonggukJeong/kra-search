@@ -47,7 +47,7 @@
       <span class="muted">제외: Windows, Program Files, AppData, 휴지통, 임시·자동저장 파일</span> <span class="btn" style="margin-left:6px">범위 변경…</span>
     </div>
     <div class="box">
-      <b>발견된 문서</b> 18,420개 <span class="muted">· 예상 시간: 키워드 검색 약 25분 / 의미 검색 약 6시간 (PC를 쓰지 않을 때 진행)</span>
+      <b>발견된 문서</b> 18,420개 <span class="muted">· 예상 시간: 키워드 검색 약 25분 · 빠른 의미 검색 약 45분 · 정밀 의미 검색은 PC를 쓰지 않을 때 계속 진행</span>
     </div>
     <div class="box" style="background:#fffbeb;border-color:#fde68a">
       <b>이 PC 성능: 저사양</b> <span class="muted">(2코어 · RAM 4GB)</span><br>
@@ -64,22 +64,22 @@
   <div class="grid2">
     <div>
       <div class="menu">
-        <div><b>🔍 검색 열기</b><span class="kbd">Ctrl+Space</span></div>
+        <div><b>🔍 검색 열기</b><span class="kbd">Alt+Space</span></div>
         <div class="sep"></div>
         <div>⏸ 색인 일시 정지 ▸<span class="muted">1시간 / 오늘</span></div>
-        <div>📊 색인 현황<span class="muted">의미 62%</span></div>
+        <div>📊 색인 현황<span class="muted">정밀 의미 검색 23%</span></div>
         <div>🛡 개인정보 점검<span class="muted">37개</span></div>
         <div>⚙ 설정</div>
         <div class="sep"></div>
         <div>종료</div>
       </div>
-      <div class="muted" style="margin-top:6px">트레이 아이콘: 색인 중이면 작은 점이 돌아가고, 일시 정지면 ⏸ 표시</div>
+      <div class="muted" style="margin-top:6px">트레이 아이콘 왼쪽 클릭 = 검색창 열기 · 오른쪽 클릭 = 이 메뉴. 아이콘: 색인 중이면 작은 점이 돌아가고, 일시 정지면 ⏸ 표시</div>
     </div>
     <div>
       <div class="win"><div class="tb"><span>단축키를 등록하지 못했어요</span><span>✕</span></div><div class="bd">
-        <span class="kbd">Ctrl+Space</span> 는 다른 프로그램(입력기 등)이 이미 사용 중입니다.<br>
+        <span class="kbd">Alt+Space</span> 는 다른 프로그램이 이미 사용 중입니다.<br>
         <div style="margin:8px 0" class="muted">다른 조합을 선택하세요:</div>
-        <span class="btn pri">Ctrl+Shift+Space</span><span class="btn">Alt+S</span><span class="btn">직접 지정…</span>
+        <span class="btn pri">Ctrl+Alt+Space</span><span class="btn">직접 지정…</span>
       </div></div>
     </div>
   </div>
@@ -91,12 +91,14 @@
   <div class="win" style="max-width:720px"><div class="tb"><span>색인 현황</span><span>✕</span></div><div class="bd">
     <div class="grid2">
       <div>
-        <b>1단계 · 키워드 검색</b> <span class="ok">✔ 완료</span>
+        <b>키워드 검색</b> <span class="ok">✔ 완료</span>
         <div class="bar g"><span style="width:100%"></span></div><span class="muted">18,420 / 18,420</span>
       </div>
       <div>
-        <b>2단계 · 의미 검색</b> <span class="muted">진행 중 (PC 유휴 시)</span>
-        <div class="bar"><span style="width:62%"></span></div><span class="muted">11,420 / 18,420 · 남은 시간 약 2시간</span>
+        <b>빠른 의미 검색</b> <span class="ok">✔ 완료</span>
+        <div class="bar g"><span style="width:100%"></span></div><span class="muted">18,420 / 18,420</span>
+        <div style="margin-top:8px"><b>정밀 의미 검색</b> <span class="muted">진행 중 (PC를 쓰지 않을 때)</span></div>
+        <div class="bar"><span style="width:23%"></span></div><span class="muted">23% · 최근 문서부터 진행 중</span>
       </div>
     </div>
     <div class="grid2" style="margin-top:12px">
@@ -109,18 +111,18 @@
       </table>
       <table>
         <tr><th>내용을 읽지 못한 파일</th><th></th></tr>
-        <tr><td>🔒 DRM (Fasoo)</td><td><a>214 ›</a></td></tr>
+        <tr><td>🔒 보안 문서 (DRM)</td><td><a>214 ›</a></td></tr>
         <tr><td>🔑 암호 문서</td><td><a>12 ›</a></td></tr>
-        <tr><td>⚠ 추출 실패 · 손상</td><td><a>31 ›</a></td></tr>
-        <tr><td>⏱ 시간 초과 · 100MB 초과</td><td><a>5 ›</a></td></tr>
+        <tr><td>⚠ 열 수 없는 파일</td><td><a>31 ›</a></td></tr>
+        <tr><td>⏱ 시간 초과 · 너무 큰 파일</td><td><a>5 ›</a></td></tr>
       </table>
     </div>
     <div class="box" style="margin-top:12px">
-      <span class="ok">🔐 색인 암호화(EFS) 적용됨</span> · 색인 크기 1.8GB · 파일명 엔진(서비스) <span class="ok">● 실행 중</span>
+      <span class="ok">🔐 색인 데이터 암호화: 적용됨</span> · 색인 크기 1.8GB · 파일 이름 검색 엔진 <span class="ok">● 실행 중</span> · <a>자세히</a>
     </div>
     <div><span class="btn">⏸ 일시 정지</span><span class="btn">다시 색인…</span></div>
   </div></div>
-  <div class="muted" style="margin-top:6px">EFS를 쓸 수 없는 PC: <span class="warn">⚠ 색인 폴더 암호화 불가 (Windows 버전/정책). 개인정보 번호와 미리보기 원문은 별도로 암호화되어 보호됩니다.</span></div>
+  <div class="muted" style="margin-top:6px">암호화를 쓸 수 없는 PC: <span class="warn">⚠ 이 PC에서는 색인 데이터 암호화를 사용할 수 없습니다(Windows 버전 또는 기관 설정). 개인정보 번호는 원래부터 저장하지 않으며, 미리보기 내용은 별도로 암호화됩니다.</span></div>
 </div></div>
 
 <!-- ⑤ 개인정보 점검 -->
@@ -151,14 +153,14 @@
         <div class="on">일반</div><div>색인 범위</div><div>성능</div><div>모델</div><div>약어 사전</div><div>개인정보·보안</div><div>정보</div>
       </div>
       <div class="bd" style="flex:1">
-        <div class="fld"><span>검색 단축키</span><span class="kbd">Ctrl+Space</span></div>
+        <div class="fld"><span>검색 단축키</span><span class="kbd">Alt+Space</span></div>
         <div class="fld"><span>상주 모드 <span class="muted">(끄면 실행할 때마다 변경분 색인)</span></span><span class="tg"></span></div>
         <div class="fld"><span>Windows 시작 시 실행</span><span class="tg"></span></div>
         <div class="fld"><span>테마</span><span class="seg"><span class="on">시스템</span><span>밝게</span><span>어둡게</span></span></div>
         <div class="fld"><span>결과 미리보기 패널</span><span class="seg"><span class="on">자동(화면 폭)</span><span>항상</span><span>Space로</span></span></div>
         <div style="margin-top:14px" class="muted">
           <b>색인 범위</b>: 드라이브/폴더 추가·제외, 제외 패턴 · <b>성능</b>: 프로필(저사양/보통/고성능), 색인 스레드 수, 유휴 판단 시간(기본 2분) ·
-          <b>약어 사전</b>: 표 편집, TSV 가져오기/내보내기 · <b>개인정보·보안</b>: 마스킹 방식 안내, EFS 상태, <span style="color:#b91c1c">색인 전체 삭제</span> ·
+          <b>약어 사전</b>: 표 편집, TSV 가져오기/내보내기 · <b>개인정보·보안</b>: 마스킹 방식 안내, 색인 데이터 암호화 상태, <span style="color:#b91c1c">색인 전체 삭제</span> ·
           <b>모델</b>: model-settings.html 참고 · <b>정보</b>: 버전, 오픈소스 라이선스
         </div>
       </div>

@@ -1,5 +1,5 @@
 <h2>설정 &gt; 모델 탭 (1안)</h2>
-<p class="subtitle">검색용 임베딩 모델(1차)과 요약·질의응답용 언어 모델(2차 자리)을 관리합니다. 모델은 인터넷에서 받지 않고 PC에 있는 GGUF 파일을 선택합니다.</p>
+<p class="subtitle">검색용 모델(1차)과 요약·질의응답용 언어 모델(2차 자리)을 관리합니다. 모델은 인터넷에서 받지 않고 PC에 있는 GGUF 파일을 선택합니다.</p>
 
 <style>
   .ux { font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif; font-size:13px; color:#1f2937; }
@@ -30,11 +30,11 @@
       <div class="side"><div>일반</div><div>색인 범위</div><div>성능</div><div class="on">모델</div><div>약어 사전</div><div>개인정보·보안</div><div>정보</div></div>
       <div class="bd">
         <div class="slot">
-          <b>🔍 검색용 모델 (임베딩)</b> <span class="pill">사용 중</span><br>
+          <b>🔍 검색용 모델</b> <span class="pill">사용 중</span><br>
           <table>
-            <tr><td>모델</td><td><b>EmbeddingGemma 2</b> · 텍스트 전용 · Q8 <span class="muted">(기본 포함)</span></td></tr>
-            <tr><td>저장 차원</td><td>256 (768에서 축소)</td></tr>
-            <tr><td>이 PC 속도</td><td>청크 약 38개/초 · 검색어 임베딩 45ms</td></tr>
+            <tr><td>모델</td><td><b>EmbeddingGemma 2</b> <span class="muted">(기본 포함)</span></td></tr>
+            <tr><td>이 PC 처리 속도</td><td>빠른 의미 검색: 문서 1만 개 약 25분 <span class="muted">(실측값 예시)</span></td></tr>
+            <tr><td>검색 응답</td><td>약 0.05초 <span class="muted">· [자세히]: 양자화·차원·초당 토큰</span></td></tr>
             <tr><td>메모리</td><td>약 330MB (검색창 사용 시에만 로드, 5분 후 해제)</td></tr>
           </table>
           <div style="margin-top:8px"><span class="btn">다른 모델 추가…</span><span class="btn">보관된 모델 1개 ▾</span></div>
@@ -58,10 +58,10 @@
       <tr><td>모델 프로필</td><td class="ok">✔ 알려진 모델 (접두어 query: / passage:)</td></tr>
       <tr><td>차원</td><td>768 → 256으로 저장</td></tr>
       <tr><td>예문 검사</td><td class="ok">✔ 정상 ("경마 매출" ↔ "마권 발매액" 유사도 0.81)</td></tr>
-      <tr><td>이 PC 속도</td><td>청크 약 52개/초</td></tr>
+      <tr><td>이 PC 처리 속도</td><td>빠른 의미 검색: 문서 1만 개 약 20분</td></tr>
     </table>
     <div style="margin-top:10px;padding:10px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a" class="muted">
-      의미 검색 색인을 이 모델로 <b>새로 만듭니다</b>. 예상 약 4시간 (PC 유휴 시). 완료될 때까지 <b>기존 모델로 계속 검색</b>됩니다.
+      의미 검색 색인을 이 모델로 <b>새로 만듭니다</b>. 빠른 의미 검색 약 40분, 정밀 의미 검색은 PC를 쓰지 않을 때 계속 진행. 완료될 때까지 <b>기존 모델로 계속 검색</b>됩니다.
       작업 중 디스크 약 0.6GB가 추가로 필요합니다. 키워드 검색 색인은 그대로 사용합니다.
     </div>
     <div style="text-align:right;margin-top:10px"><span class="btn">취소</span><span class="btn pri">이 모델로 전환 시작</span></div>
@@ -73,7 +73,7 @@
   <div class="slot">
     <b>모델 전환 중</b> EmbeddingGemma 2 → multilingual-e5-base <span class="muted">· 지금은 EmbeddingGemma 2로 검색 중</span>
     <div class="bar"><span></span></div>
-    <span class="muted">6,980 / 18,420 · 남은 시간 약 2시간 30분</span>
+    <span class="muted">빠른 의미 검색 38% · 남은 시간 약 25분</span>
     <div style="margin-top:6px"><span class="btn">전환 취소</span></div>
     <div class="muted" style="margin-top:6px">전환 완료 후에도 이전 모델 색인을 보관하며, [이전 모델로 되돌리기] 또는 [이전 색인 삭제]를 선택할 수 있습니다.</div>
   </div>
