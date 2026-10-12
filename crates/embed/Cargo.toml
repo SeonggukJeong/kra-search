@@ -9,3 +9,7 @@ doc = { path = "../doc" }
 llama-sys = { path = "../llama-sys" }
 thiserror.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json.workspace = true
