@@ -1,0 +1,39 @@
+name: perf-probe
+# Windows에서 llama.cpp 컴파일러(MSVC vs clang-cl)에 따른 임베딩 속도 비교 실험.
+on:
+  workflow_dispatch:
+  push:
+    branches: [m0-spike]
+    paths: [".github/workflows/perf-probe.yml", "crates/llama-sys/build.rs"]
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix: { toolset: ["", "ClangCL"] }
+    runs-on: windows-latest
+    env: { KRA_LLAMA_TOOLSET: "${{ matrix.toolset }}" }
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - shell: bash
+        run: bash tools/fetch-rhwp.sh
+      - run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - run: cargo build --release -p diag
+      - name: show llama.cpp compiler flags
+        shell: bash
+        run: |
+          C=$(ls -d target/release/build/llama-sys-*/out/build | head -1)
+          grep -E "^CMAKE_(C|CXX)_COMPILER:|^CMAKE_(C|CXX)_FLAGS(_RELEASE)?:|^CMAKE_GENERATOR(_TOOLSET)?:" $C/CMakeCache.txt
+      - uses: actions/cache@v4
+        with: { path: models, key: "gguf-${{ hashFiles('tools/fetch-models.sh') }}" }
+      - name: bench
+        shell: bash
+        run: |
+          bash tools/fetch-models.sh
+          mkdir -p probe && cp target/release/kra-diag.exe probe/
+          find target/release/build -path '*llama-sys*' -name '*.dll' -exec cp {} probe/ \;
+          for t in 1 2 4; do
+            ./probe/kra-diag.exe bench-one --threads $t models/embeddinggemma-2-Q4.gguf 2>/dev/null | python -c "import json,sys; r=json.load(sys.stdin); print('toolset=[${{ matrix.toolset }}] threads', $t, 'tok/s', r['tokens_per_sec'], 'err', r.get('error'))"
+          done
