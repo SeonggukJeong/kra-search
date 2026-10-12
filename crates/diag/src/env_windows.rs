@@ -3,7 +3,10 @@
 
 use crate::report::{EnvInfo, HotkeyCheck};
 use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::Storage::FileSystem::{DecryptFileW, EncryptFileW, FileEncryptionStatusW, FILE_IS_ENCRYPTED};
+use windows::Win32::Storage::FileSystem::{DecryptFileW, EncryptFileW, FileEncryptionStatusW};
+
+/// FileEncryptionStatusW 의 "암호화됨" 상태값(winbase.h FILE_IS_ENCRYPTED).
+const FILE_IS_ENCRYPTED: u32 = 1;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey, HOT_KEY_MODIFIERS, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, VK_SPACE,

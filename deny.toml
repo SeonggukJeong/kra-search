@@ -4,9 +4,9 @@ unmaintained = "workspace"
 # rhwp(경로 의존)가 직접 쓰는 크레이트라 "workspace" 범위에 잡힌다. 보안 취약점이 아닌 "관리 중단" 경고이며,
 # rhwp 업그레이드 때 다시 확인한다.
 ignore = [
-  { crate = "paste", reason = "rhwp direct dependency; unmaintained notice only" },
-  { crate = "rustybuzz", reason = "rhwp direct dependency (renderer); unmaintained notice only" },
-  { crate = "ttf-parser", reason = "rhwp direct dependency (renderer); unmaintained notice only" },
+  { id = "RUSTSEC-2024-0436", reason = "paste — rhwp direct dependency; unmaintained notice only" },
+  { id = "RUSTSEC-2026-0192", reason = "rustybuzz — rhwp renderer dependency; unmaintained notice only" },
+  { id = "RUSTSEC-2026-0206", reason = "ttf-parser — rhwp renderer dependency; unmaintained notice only" },
 ]
 
 [licenses]

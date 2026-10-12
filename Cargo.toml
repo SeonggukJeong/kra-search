@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+# third_party/rhwp 는 경로 의존일 뿐 작업 공간 멤버가 아니다(그쪽 테스트를 돌리지 않는다).
+exclude = ["third_party"]
 
 [workspace.package]
 edition = "2021"
