@@ -1,0 +1,95 @@
+<h2>검색창 레이아웃: 어떤 형태가 좋을까요?</h2>
+<p class="subtitle">단축키(Ctrl+Space)로 뜨는 메인 검색창입니다. 예시 검색어는 "경마 매출 감소 원인"이고, 의미 검색이 아직 진행 중인 순간을 보여 줍니다.</p>
+
+<style>
+  .sx { font-family: "Malgun Gothic","Apple SD Gothic Neo",sans-serif; font-size: 13px; color: #1f2937; }
+  .sx .bar { display:flex; align-items:center; gap:8px; border:2px solid #2563eb; border-radius:10px; padding:8px 12px; background:#fff; }
+  .sx .bar .q { flex:1; font-size:15px; }
+  .sx .chips { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+  .sx .chip { background:#eef2ff; color:#3730a3; border-radius:999px; padding:2px 10px; font-size:12px; }
+  .sx .chip.date { background:#ecfdf5; color:#065f46; }
+  .sx .prog { font-size:11px; color:#6b7280; display:flex; align-items:center; gap:6px; margin:4px 0 6px; }
+  .sx .prog .b { height:3px; width:80px; background:#e5e7eb; border-radius:2px; overflow:hidden; position:relative; }
+  .sx .prog .b::after { content:""; position:absolute; left:0; top:0; height:100%; width:55%; background:#2563eb; }
+  .sx .row { display:flex; gap:10px; padding:8px 10px; border-radius:8px; align-items:flex-start; }
+  .sx .row.sel { background:#dbeafe; outline:1px solid #93c5fd; }
+  .sx .row.new { border-left:3px solid #f59e0b; background:#fffbeb; }
+  .sx .ic { width:26px; height:26px; border-radius:6px; background:#0ea5e9; color:#fff; font-size:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .sx .ic.pdf { background:#dc2626; } .sx .ic.xls { background:#16a34a; }
+  .sx .t { font-weight:600; }
+  .sx .m { font-size:11px; color:#6b7280; }
+  .sx .s { font-size:12px; color:#374151; margin-top:2px; }
+  .sx mark { background:#fde68a; padding:0 1px; }
+  .sx .bdg { font-size:10px; border-radius:4px; padding:0 5px; margin-left:4px; font-weight:500; }
+  .sx .pii { background:#fee2e2; color:#991b1b; } .sx .ver { background:#f3f4f6; color:#374151; } .sx .src { background:#fef3c7; color:#92400e; }
+  .sx .pv { border-left:1px solid #e5e7eb; padding-left:12px; }
+  .sx .pv h4 { margin:0 0 6px; font-size:13px; }
+  .sx .kv { font-size:11px; color:#4b5563; line-height:1.7; }
+  .sx .doc { margin-top:8px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px; padding:8px; font-size:11px; line-height:1.6; }
+  .sx .foot { font-size:10px; color:#9ca3af; margin-top:8px; border-top:1px solid #f3f4f6; padding-top:6px; }
+</style>
+
+<div class="options">
+
+<!-- A -->
+<div class="option" data-choice="a" onclick="toggleSelect(this)">
+  <div class="letter">A</div>
+  <div class="content">
+    <h3>스포트라이트형: 목록 위주, Space로 미리보기</h3>
+    <p>화면 가운데에 작은 창이 뜨고 결과 목록만 보입니다. Space를 누르면 미리보기가 옆으로 펼쳐집니다. 가장 가볍고 빠른 느낌입니다.</p>
+    <div class="mockup"><div class="mockup-body sx" style="max-width:560px">
+      <div class="bar"><span>🔍</span><span class="q">경마 매출 감소 원인</span><span class="m">Esc</span></div>
+      <div class="chips"><span class="chip date">📅 작년(2025) ✕</span><span class="chip">형식: 전체 ▾</span><span class="chip">기간 ▾</span><span class="chip">🛡 개인정보 ▾</span></div>
+      <div class="prog"><span class="b"></span>의미 검색 중… 결과가 더 추가될 수 있어요</div>
+      <div class="row sel"><div class="ic">HWP</div><div><div class="t">2025년 마권 <mark>매출</mark> <mark>감소</mark> <mark>원인</mark> 분석 보고(안) <span class="bdg ver">버전 4개 ▾</span></div><div class="m">D:\업무\2025\경영분석 · 2025-11-04</div><div class="s">…온라인 발매 전환 지연과 입장객 감소가 주요 <mark>원인</mark>으로…</div></div></div>
+      <div class="row"><div class="ic">HWP</div><div><div class="t">[공문] 2025년 상반기 경마 사업 실적 보고</div><div class="m">문서번호 경영전략부-1234 · 시행 2025-07-15 · 수신 경영본부장</div></div></div>
+      <div class="row new"><div class="ic xls">XLS</div><div><div class="t">발매액_추이_지점별.xlsx <span class="bdg src">✨ 의미 검색으로 추가</span></div><div class="m">D:\업무\자료 · 2025-10-02</div><div class="s">지점별 발매액 전년 대비 -12.4%…</div></div></div>
+      <div class="foot">↑↓ 이동 · Enter 열기 · Ctrl+Enter 폴더 열기 · Space 미리보기</div>
+    </div></div>
+  </div>
+</div>
+
+<!-- B -->
+<div class="option" data-choice="b" onclick="toggleSelect(this)">
+  <div class="letter">B</div>
+  <div class="content">
+    <h3>2분할형: 목록 + 미리보기 항상 표시</h3>
+    <p>창이 넓고, 오른쪽에 선택한 문서의 공문 정보와 일치한 구절이 항상 보입니다. 파일을 열지 않고도 판단할 수 있습니다.</p>
+    <div class="mockup"><div class="mockup-body sx">
+      <div class="bar"><span>🔍</span><span class="q">경마 매출 감소 원인</span><span class="m">Esc</span></div>
+      <div class="chips"><span class="chip date">📅 작년(2025) ✕</span><span class="chip">형식 ▾</span><span class="chip">기간 ▾</span><span class="chip">🛡 개인정보 ▾</span></div>
+      <div class="prog"><span class="b"></span>의미 검색 중…</div>
+      <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:10px">
+        <div>
+          <div class="row sel"><div class="ic">HWP</div><div><div class="t">2025년 마권 <mark>매출</mark> <mark>감소</mark> 분석(안) <span class="bdg ver">4</span></div><div class="m">2025-11-04 · 경영분석</div></div></div>
+          <div class="row"><div class="ic">HWP</div><div><div class="t">[공문] 상반기 경마 사업 실적 보고</div><div class="m">2025-07-15 · 경영전략부-1234</div></div></div>
+          <div class="row new"><div class="ic xls">XLS</div><div><div class="t">발매액_추이_지점별.xlsx <span class="bdg src">✨</span></div><div class="m">2025-10-02</div></div></div>
+          <div class="row"><div class="ic pdf">PDF</div><div><div class="t">고객 설문 결과 <span class="bdg pii">🛡 휴대폰 12</span></div><div class="m">2025-09-20</div></div></div>
+        </div>
+        <div class="pv">
+          <h4>2025년 마권 매출 감소 원인 분석 보고(안)</h4>
+          <div class="kv">📁 D:\업무\2025\경영분석<br>🕒 수정 2025-11-04 · HWP · 3쪽<br>🗂 버전: 최종2(이 파일) · 최종 · 수정 · (안)</div>
+          <div class="doc"><b>2쪽 · Ⅱ. 원인 분석</b><br>…온라인 발매 전환 지연과 입장객 <mark>감소</mark>가 주요 <mark>원인</mark>으로 분석되며, 특히 30대 이하 고객층의 이탈이…<br><br><b>3쪽 · 표 2</b><br>구분: 지점 발매 · 증감률: -12.4%</div>
+          <div class="kv" style="margin-top:6px">[열기] [폴더 열기] [경로 복사]</div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<!-- C -->
+<div class="option" data-choice="c" onclick="toggleSelect(this)">
+  <div class="letter">C</div>
+  <div class="content">
+    <h3>적응형: 작게 시작해 결과가 나오면 넓어짐</h3>
+    <p>처음에는 A처럼 검색줄 하나만 보입니다. 결과가 나오면 창이 B처럼 넓어지고, 이 크기를 기억합니다. 화면이 작은 PC에서는 A 형태를 유지합니다.</p>
+    <div class="mockup"><div class="mockup-body sx">
+      <div class="m" style="margin-bottom:4px">① 처음 열었을 때</div>
+      <div class="bar" style="max-width:420px"><span>🔍</span><span class="q" style="color:#9ca3af">무엇을 찾으세요? 예: 작년 예산 관련 공문</span></div>
+      <div class="m" style="margin:10px 0 4px">② 입력 후 → B 형태로 펼쳐짐 (창 너비 1000px 미만이면 A 형태 유지)</div>
+      <div class="placeholder" style="height:60px;display:flex;align-items:center;justify-content:center">목록 | 미리보기</div>
+    </div></div>
+  </div>
+</div>
+
+</div>

@@ -1,0 +1,179 @@
+<h2>나머지 화면 구성 확인</h2>
+<p class="subtitle">각 화면은 선택지가 아니라 1안입니다. 고칠 부분을 터미널에 적어 주세요. 화면 번호(①~⑦)로 말씀하시면 됩니다.</p>
+
+<style>
+  .ux { font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif; font-size:13px; color:#1f2937; }
+  .ux .win { border:1px solid #d1d5db; border-radius:10px; background:#fff; overflow:hidden; box-shadow:0 4px 14px rgba(0,0,0,.06); }
+  .ux .tb { background:#f3f4f6; padding:6px 12px; font-size:12px; color:#374151; display:flex; justify-content:space-between; border-bottom:1px solid #e5e7eb; }
+  .ux .bd { padding:14px 16px; }
+  .ux h4 { margin:0 0 8px; font-size:15px; }
+  .ux .muted { color:#6b7280; font-size:12px; }
+  .ux .btn { display:inline-block; border:1px solid #d1d5db; border-radius:6px; padding:4px 12px; font-size:12px; background:#fff; margin-right:4px; }
+  .ux .btn.pri { background:#2563eb; color:#fff; border-color:#2563eb; }
+  .ux .btn.dng { color:#b91c1c; border-color:#fca5a5; }
+  .ux .box { border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; margin:8px 0; }
+  .ux .bar { height:8px; background:#e5e7eb; border-radius:4px; overflow:hidden; margin:4px 0 2px; }
+  .ux .bar > span { display:block; height:100%; background:#2563eb; }
+  .ux .bar.g > span { background:#16a34a; }
+  .ux table { width:100%; border-collapse:collapse; font-size:12px; }
+  .ux th, .ux td { text-align:left; padding:5px 6px; border-bottom:1px solid #f3f4f6; }
+  .ux th { color:#6b7280; font-weight:500; }
+  .ux .pill { font-size:10px; border-radius:4px; padding:1px 6px; }
+  .ux .hi { background:#fee2e2; color:#991b1b; } .ux .md { background:#ffedd5; color:#9a3412; } .ux .lo { background:#fef9c3; color:#854d0e; }
+  .ux .ok { color:#047857; } .ux .warn { color:#b45309; }
+  .ux .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .ux .menu { width:230px; border:1px solid #d1d5db; border-radius:8px; background:#fff; padding:4px 0; box-shadow:0 6px 18px rgba(0,0,0,.12); }
+  .ux .menu div { padding:6px 14px; font-size:12px; display:flex; justify-content:space-between; }
+  .ux .menu .sep { border-top:1px solid #e5e7eb; margin:4px 0; padding:0; }
+  .ux .side { width:150px; border-right:1px solid #e5e7eb; padding:8px 0; font-size:12px; }
+  .ux .side div { padding:6px 14px; } .ux .side .on { background:#eff6ff; color:#1d4ed8; font-weight:600; border-left:3px solid #2563eb; }
+  .ux .fld { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid #f3f4f6; font-size:12px; }
+  .ux .tg { width:30px; height:16px; border-radius:8px; background:#2563eb; position:relative; display:inline-block; }
+  .ux .tg::after { content:""; position:absolute; right:2px; top:2px; width:12px; height:12px; border-radius:50%; background:#fff; }
+  .ux .seg span { border:1px solid #d1d5db; padding:2px 10px; font-size:11px; } .ux .seg .on { background:#2563eb; color:#fff; border-color:#2563eb; }
+  .ux .kbd { border:1px solid #d1d5db; border-bottom-width:2px; border-radius:4px; padding:0 6px; font-size:11px; background:#f9fafb; }
+  .lbl { font-weight:700; font-size:14px; margin:22px 0 6px; }
+</style>
+
+<!-- ① 첫 실행 -->
+<div class="lbl">① 첫 실행 (설치 직후 한 번)</div>
+<div class="mockup"><div class="mockup-body ux">
+  <div class="win" style="max-width:620px"><div class="tb"><span>KRA 문서검색 시작하기</span><span>✕</span></div><div class="bd">
+    <h4>이 PC의 문서를 색인할게요</h4>
+    <div class="muted">색인은 이 PC 안에서만 처리되고, 어떤 데이터도 외부로 나가지 않습니다.</div>
+    <div class="box">
+      <b>색인 범위</b> <span class="muted">· 모든 로컬 드라이브 (C:, D:)</span><br>
+      <span class="muted">대상 형식: HWP · HWPX · PDF · DOCX · XLSX · PPTX · ODT/ODS/ODP · TXT</span><br>
+      <span class="muted">제외: Windows, Program Files, AppData, 휴지통, 임시·자동저장 파일</span> <span class="btn" style="margin-left:6px">범위 변경…</span>
+    </div>
+    <div class="box">
+      <b>발견된 문서</b> 18,420개 <span class="muted">· 예상 시간: 키워드 검색 약 25분 / 의미 검색 약 6시간 (PC를 쓰지 않을 때 진행)</span>
+    </div>
+    <div class="box" style="background:#fffbeb;border-color:#fde68a">
+      <b>이 PC 성능: 저사양</b> <span class="muted">(2코어 · RAM 4GB)</span><br>
+      <span class="muted">권장: 저사양 프로필 · 상주 모드 끄기 (필요할 때만 실행해 변경분 색인)</span>
+      <div style="margin-top:6px" class="seg"><span class="on">저사양</span><span>보통</span><span>고성능</span></div>
+    </div>
+    <div style="text-align:right;margin-top:10px"><span class="btn">나중에</span><span class="btn pri">색인 시작</span></div>
+  </div></div>
+</div></div>
+
+<!-- ② 트레이 + ③ 단축키 충돌 -->
+<div class="lbl">② 트레이 메뉴 · ③ 단축키 충돌 안내</div>
+<div class="mockup"><div class="mockup-body ux">
+  <div class="grid2">
+    <div>
+      <div class="menu">
+        <div><b>🔍 검색 열기</b><span class="kbd">Ctrl+Space</span></div>
+        <div class="sep"></div>
+        <div>⏸ 색인 일시 정지 ▸<span class="muted">1시간 / 오늘</span></div>
+        <div>📊 색인 현황<span class="muted">의미 62%</span></div>
+        <div>🛡 개인정보 점검<span class="muted">37개</span></div>
+        <div>⚙ 설정</div>
+        <div class="sep"></div>
+        <div>종료</div>
+      </div>
+      <div class="muted" style="margin-top:6px">트레이 아이콘: 색인 중이면 작은 점이 돌아가고, 일시 정지면 ⏸ 표시</div>
+    </div>
+    <div>
+      <div class="win"><div class="tb"><span>단축키를 등록하지 못했어요</span><span>✕</span></div><div class="bd">
+        <span class="kbd">Ctrl+Space</span> 는 다른 프로그램(입력기 등)이 이미 사용 중입니다.<br>
+        <div style="margin:8px 0" class="muted">다른 조합을 선택하세요:</div>
+        <span class="btn pri">Ctrl+Shift+Space</span><span class="btn">Alt+S</span><span class="btn">직접 지정…</span>
+      </div></div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ④ 색인 현황 -->
+<div class="lbl">④ 색인 현황</div>
+<div class="mockup"><div class="mockup-body ux">
+  <div class="win" style="max-width:720px"><div class="tb"><span>색인 현황</span><span>✕</span></div><div class="bd">
+    <div class="grid2">
+      <div>
+        <b>1단계 · 키워드 검색</b> <span class="ok">✔ 완료</span>
+        <div class="bar g"><span style="width:100%"></span></div><span class="muted">18,420 / 18,420</span>
+      </div>
+      <div>
+        <b>2단계 · 의미 검색</b> <span class="muted">진행 중 (PC 유휴 시)</span>
+        <div class="bar"><span style="width:62%"></span></div><span class="muted">11,420 / 18,420 · 남은 시간 약 2시간</span>
+      </div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <table>
+        <tr><th>형식</th><th>문서 수</th></tr>
+        <tr><td>HWP / HWPX</td><td>9,812</td></tr>
+        <tr><td>PDF</td><td>4,105</td></tr>
+        <tr><td>XLSX / ODS</td><td>2,330</td></tr>
+        <tr><td>DOCX · PPTX · ODT · 기타</td><td>2,173</td></tr>
+      </table>
+      <table>
+        <tr><th>내용을 읽지 못한 파일</th><th></th></tr>
+        <tr><td>🔒 DRM (Fasoo)</td><td><a>214 ›</a></td></tr>
+        <tr><td>🔑 암호 문서</td><td><a>12 ›</a></td></tr>
+        <tr><td>⚠ 추출 실패 · 손상</td><td><a>31 ›</a></td></tr>
+        <tr><td>⏱ 시간 초과 · 100MB 초과</td><td><a>5 ›</a></td></tr>
+      </table>
+    </div>
+    <div class="box" style="margin-top:12px">
+      <span class="ok">🔐 색인 암호화(EFS) 적용됨</span> · 색인 크기 1.8GB · 파일명 엔진(서비스) <span class="ok">● 실행 중</span>
+    </div>
+    <div><span class="btn">⏸ 일시 정지</span><span class="btn">다시 색인…</span></div>
+  </div></div>
+  <div class="muted" style="margin-top:6px">EFS를 쓸 수 없는 PC: <span class="warn">⚠ 색인 폴더 암호화 불가 (Windows 버전/정책). 개인정보 번호와 미리보기 원문은 별도로 암호화되어 보호됩니다.</span></div>
+</div></div>
+
+<!-- ⑤ 개인정보 점검 -->
+<div class="lbl">⑤ 개인정보 점검</div>
+<div class="mockup"><div class="mockup-body ux">
+  <div class="win" style="max-width:760px"><div class="tb"><span>개인정보 점검</span><span>✕</span></div><div class="bd">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div><b>개인정보가 포함된 문서 37개</b> <span class="muted">· 번호 값은 이 화면에도 표시하지 않습니다</span></div>
+      <div class="seg"><span class="on">전체</span><span>주민번호</span><span>외국인·여권·면허</span><span>계좌</span><span>휴대폰·이메일</span></div>
+    </div>
+    <table style="margin-top:10px">
+      <tr><th>위험도</th><th>파일</th><th>포함 항목</th><th>수정일</th><th></th></tr>
+      <tr><td><span class="pill hi">높음</span></td><td>2024_시상_대상자_명단.xlsx<br><span class="muted">C:\Users\kim\Downloads</span></td><td>주민번호 48 · 계좌 48</td><td>2024-12-03</td><td><span class="btn">폴더 열기</span></td></tr>
+      <tr><td><span class="pill hi">높음</span></td><td>채용_응시원서_취합.hwp<br><span class="muted">D:\업무\인사</span></td><td>주민번호 12 · 휴대폰 12</td><td>2025-03-18</td><td><span class="btn">폴더 열기</span></td></tr>
+      <tr><td><span class="pill md">중간</span></td><td>고객_설문_결과.pdf<br><span class="muted">D:\업무\자료</span></td><td>휴대폰 12</td><td>2025-09-20</td><td><span class="btn">폴더 열기</span></td></tr>
+      <tr><td><span class="pill lo">낮음</span></td><td>행사_협조_요청.hwp<br><span class="muted">D:\업무\2025</span></td><td>이메일 2</td><td>2025-05-02</td><td><span class="btn">폴더 열기</span></td></tr>
+    </table>
+    <div class="muted" style="margin-top:8px">위험도 = 유형 가중치(주민번호 &gt; 외국인·여권·면허 &gt; 계좌 &gt; 휴대폰 &gt; 이메일) × 개수 · 이름·주소만 있는 문서는 1차에서 탐지하지 않음</div>
+  </div></div>
+</div></div>
+
+<!-- ⑥ 설정 -->
+<div class="lbl">⑥ 설정</div>
+<div class="mockup"><div class="mockup-body ux">
+  <div class="win" style="max-width:760px"><div class="tb"><span>설정</span><span>✕</span></div>
+    <div style="display:flex">
+      <div class="side">
+        <div class="on">일반</div><div>색인 범위</div><div>성능</div><div>모델</div><div>약어 사전</div><div>개인정보·보안</div><div>정보</div>
+      </div>
+      <div class="bd" style="flex:1">
+        <div class="fld"><span>검색 단축키</span><span class="kbd">Ctrl+Space</span></div>
+        <div class="fld"><span>상주 모드 <span class="muted">(끄면 실행할 때마다 변경분 색인)</span></span><span class="tg"></span></div>
+        <div class="fld"><span>Windows 시작 시 실행</span><span class="tg"></span></div>
+        <div class="fld"><span>테마</span><span class="seg"><span class="on">시스템</span><span>밝게</span><span>어둡게</span></span></div>
+        <div class="fld"><span>결과 미리보기 패널</span><span class="seg"><span class="on">자동(화면 폭)</span><span>항상</span><span>Space로</span></span></div>
+        <div style="margin-top:14px" class="muted">
+          <b>색인 범위</b>: 드라이브/폴더 추가·제외, 제외 패턴 · <b>성능</b>: 프로필(저사양/보통/고성능), 색인 스레드 수, 유휴 판단 시간(기본 2분) ·
+          <b>약어 사전</b>: 표 편집, TSV 가져오기/내보내기 · <b>개인정보·보안</b>: 마스킹 방식 안내, EFS 상태, <span style="color:#b91c1c">색인 전체 삭제</span> ·
+          <b>모델</b>: model-settings.html 참고 · <b>정보</b>: 버전, 오픈소스 라이선스
+        </div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- ⑦ 접근성 -->
+<div class="lbl">⑦ 접근성 (모든 화면 공통 원칙)</div>
+<div class="mockup"><div class="mockup-body ux">
+  <table>
+    <tr><td>키보드</td><td>모든 기능을 키보드만으로 사용 가능 · 포커스 테두리 항상 표시 · Tab 순서 = 화면 순서</td></tr>
+    <tr><td>화면 낭독기</td><td>결과 목록에 ARIA 속성 적용 · 새 결과가 추가되면 "의미 검색 결과 3개 추가" 같은 안내를 조용히 낭독(aria-live)</td></tr>
+    <tr><td>고대비·배율</td><td>Windows 고대비 모드 대응 · 125~200% 배율에서 레이아웃이 깨지지 않음</td></tr>
+    <tr><td>색에만 의존하지 않기</td><td>위험도·상태는 색과 함께 글자(높음/중간/낮음, ✔/⚠)를 항상 같이 표시</td></tr>
+    <tr><td>움직임 줄이기</td><td>Windows "애니메이션 효과 끄기" 설정이면 순서 변경 애니메이션 대신 즉시 반영 + 배너만 표시</td></tr>
+  </table>
+</div></div>

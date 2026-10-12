@@ -1,0 +1,90 @@
+<h2>결과가 단계적으로 바뀔 때, 어떻게 알려 줄까요?</h2>
+<p class="subtitle">상황: 키워드 결과가 먼저 나오고, 0.4초 뒤 의미 검색 결과가 합쳐지는 순간입니다. 아래 미리보기는 실제로 움직입니다(3초마다 반복).</p>
+
+<style>
+  .rx { font-family: "Malgun Gothic","Apple SD Gothic Neo",sans-serif; font-size: 13px; color:#1f2937; }
+  .rx .list { position:relative; height:176px; }
+  .rx .row { position:absolute; left:0; right:0; height:40px; display:flex; align-items:center; gap:8px; padding:0 10px; border-radius:8px; background:#fff; border:1px solid #f3f4f6; box-sizing:border-box; }
+  .rx .ic { width:24px; height:24px; border-radius:5px; background:#0ea5e9; color:#fff; font-size:9px; display:flex; align-items:center; justify-content:center; }
+  .rx .ic.x { background:#16a34a; }
+  .rx .sel { background:#dbeafe; border-color:#93c5fd; }
+  .rx .bdg { font-size:10px; border-radius:4px; padding:0 5px; }
+  .rx .up { color:#047857; font-size:11px; font-weight:600; }
+  .rx .note { font-size:11px; color:#6b7280; margin-top:6px; line-height:1.6; }
+  .rx .prog { font-size:11px; color:#6b7280; margin-bottom:6px; }
+  /* A: badge + stripe, rows jump */
+  @keyframes a-new { 0%,30% {opacity:0} 31%,100% {opacity:1} }
+  @keyframes a-r3 { 0%,30% {top:88px} 31%,100% {top:132px} }
+  @keyframes a-fade { 0%,30% {background:#fffbeb; border-left:3px solid #f59e0b} 31%,75% {background:#fffbeb; border-left:3px solid #f59e0b} 100% {background:#fff; border-left:1px solid #f3f4f6} }
+  .ra .n { top:88px; animation: a-new 3s infinite steps(1), a-fade 3s infinite; }
+  .ra .r3 { animation: a-r3 3s infinite steps(1); }
+  /* B: smooth slide + glow */
+  @keyframes b-new { 0%,30% {opacity:0; transform:translateY(-8px)} 45%,100% {opacity:1; transform:none} }
+  @keyframes b-r3 { 0%,30% {top:88px} 45%,100% {top:132px} }
+  @keyframes b-glow { 0%,40% {box-shadow:0 0 0 0 rgba(245,158,11,0)} 50% {box-shadow:0 0 0 3px rgba(245,158,11,.5)} 90%,100% {box-shadow:0 0 0 0 rgba(245,158,11,0)} }
+  .rb .n { top:88px; animation: b-new 3s infinite ease-out, b-glow 3s infinite; }
+  .rb .r3 { animation: b-r3 3s infinite ease-in-out; }
+  /* C: banner */
+  @keyframes c-ban { 0%,30% {opacity:0; transform:translateY(-4px)} 40%,100% {opacity:1; transform:none} }
+  .rc .ban { animation: c-ban 3s infinite; background:#1d4ed8; color:#fff; border-radius:999px; padding:3px 12px; font-size:11px; display:inline-block; margin-bottom:6px; }
+</style>
+
+<div class="options">
+
+<div class="option" data-choice="a" onclick="toggleSelect(this)">
+  <div class="letter">A</div>
+  <div class="content">
+    <h3>배지 + 색 띠 (즉시 반영)</h3>
+    <p>새 결과가 순간적으로 끼어들고, 주황색 띠와 ✨ 배지가 2초 동안 보였다가 사라집니다. 위로 올라간 항목에는 ▲2 같은 표시가 붙습니다. 정보는 분명하지만 목록이 "툭" 바뀝니다.</p>
+    <div class="mockup"><div class="mockup-body rx">
+      <div class="prog">▬▬▬▭▭ 의미 검색 중…</div>
+      <div class="list ra">
+        <div class="row sel" style="top:0"><div class="ic">HWP</div>마권 매출 감소 분석(안)</div>
+        <div class="row" style="top:44px"><div class="ic">HWP</div>[공문] 상반기 실적 보고</div>
+        <div class="row n"><div class="ic x">XLS</div>발매액_추이_지점별.xlsx <span class="bdg" style="background:#fef3c7;color:#92400e">✨ 의미</span> <span class="up">▲ 새 결과</span></div>
+        <div class="row r3"><div class="ic">HWP</div>경마 사업 예산 편성(안)</div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<div class="option" data-choice="b" onclick="toggleSelect(this)">
+  <div class="letter">B</div>
+  <div class="content">
+    <h3>부드러운 이동 애니메이션</h3>
+    <p>기존 항목이 0.2초 동안 미끄러지듯 내려가고, 새 항목은 위에서 살짝 내려오며 테두리가 한 번 빛납니다. 눈으로 "끼어들었다"는 걸 자연스럽게 따라갈 수 있습니다. 배지는 남기지 않습니다.</p>
+    <div class="mockup"><div class="mockup-body rx">
+      <div class="prog">▬▬▬▭▭ 의미 검색 중…</div>
+      <div class="list rb">
+        <div class="row sel" style="top:0"><div class="ic">HWP</div>마권 매출 감소 분석(안)</div>
+        <div class="row" style="top:44px"><div class="ic">HWP</div>[공문] 상반기 실적 보고</div>
+        <div class="row n"><div class="ic x">XLS</div>발매액_추이_지점별.xlsx</div>
+        <div class="row r3"><div class="ic">HWP</div>경마 사업 예산 편성(안)</div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<div class="option" data-choice="c" onclick="toggleSelect(this)">
+  <div class="letter">C</div>
+  <div class="content">
+    <h3>B + "목록을 보는 중이면 대기" 배너 (추천)</h3>
+    <p>사용자가 아직 목록을 건드리지 않았으면 B처럼 자동으로 합칩니다. 방향키나 마우스로 <b>목록을 보기 시작한 뒤</b>에는 목록을 그대로 두고, 위쪽에 "새 결과 1개 · Tab으로 반영" 배너만 띄웁니다. 보고 있던 화면이 절대 바뀌지 않습니다.</p>
+    <div class="mockup"><div class="mockup-body rx">
+      <div class="prog">✔ 검색 완료</div>
+      <div class="rc"><span class="ban">↑ 의미 검색 결과 1개 더 · Tab으로 반영</span></div>
+      <div class="list" style="height:132px">
+        <div class="row" style="top:0"><div class="ic">HWP</div>마권 매출 감소 분석(안)</div>
+        <div class="row sel" style="top:44px"><div class="ic">HWP</div>[공문] 상반기 실적 보고 <span style="font-size:10px;color:#6b7280">← 사용자가 보고 있는 항목</span></div>
+        <div class="row" style="top:88px"><div class="ic">HWP</div>경마 사업 예산 편성(안)</div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+</div>
+
+<div class="section" style="margin-top:16px">
+  <h3>공통으로 넣을 것: "왜 이 결과?"</h3>
+  <p class="subtitle">미리보기 패널 하단에 근거를 한 줄로 보여 줍니다. 예: <code>키워드 일치 3곳(제목 1) · 의미 유사도 높음 · 2025년 문서</code>. 의미 검색으로 찾은 결과가 왜 나왔는지 사용자가 납득할 수 있게 하고, 품질 문제를 제보받을 때도 쓸모가 있습니다.</p>
+</div>

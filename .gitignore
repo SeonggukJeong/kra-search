@@ -1,0 +1,5 @@
+/target/
+.superpowers/
+.claude/settings.local.json
+*.gguf
+.DS_Store
