@@ -104,14 +104,41 @@ fn main() {
         }
         _ => {}
     }
+    let out = report::output_dir(&std::env::current_dir().unwrap_or_else(|_| dir.clone()), &dir);
+    if interactive {
+        // 더블클릭 실행: 오류가 나도 창이 바로 닫히지 않게 한다.
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            default_hook(info);
+            pause("오류로 중단되었습니다. 지금까지의 결과는 kra-diag-summary.txt 에 저장되어 있습니다.");
+        }));
+    }
     let mut r = report::Report::new();
+    let save = |r: &mut report::Report, last: bool| {
+        if let Err(e) = report::write(r, &out, last) {
+            eprintln!("보고서를 저장하지 못했습니다({}): {e}", out.display());
+            if interactive {
+                pause("Enter 키를 누르면 닫힙니다.");
+            }
+            std::process::exit(1);
+        }
+    };
     match cmd {
         Cmd::All { root, models, skip_flat, flat_n } => {
             let models = models.unwrap_or_else(|| dir.join("models"));
             r.bench = Some(bench::run(&models, skip_flat, flat_n));
+            save(&mut r, false);
             r.env = Some(env::collect());
+            if let Some(e) = r.env.as_mut() {
+                e.llama_system_info = embed::engine::system_info();
+            }
+            save(&mut r, false);
             let tk = first_tokenizer(&models, &dir);
-            r.extract = Some(extract_stats::run(&roots_or_default(root), tk.as_ref()));
+            let x = extract_stats::run(&roots_or_default(root), tk.as_ref(), &mut |partial| {
+                r.extract = Some(clone_extract(partial));
+                save(&mut r, false);
+            });
+            r.extract = Some(x);
         }
         Cmd::Env => {
             let _ = embed::engine::init(Some(&dir));
@@ -122,21 +149,30 @@ fn main() {
         }
         Cmd::ExtractStats { root, models } => {
             let tk = first_tokenizer(&models.unwrap_or_else(|| dir.join("models")), &dir);
-            r.extract = Some(extract_stats::run(&roots_or_default(root), tk.as_ref()));
+            let x = extract_stats::run(&roots_or_default(root), tk.as_ref(), &mut |partial| {
+                r.extract = Some(clone_extract(partial));
+                save(&mut r, false);
+            });
+            r.extract = Some(x);
         }
         Cmd::ExtractOne { .. } | Cmd::BenchOne { .. } => unreachable!(),
     }
     if let Some(e) = r.env.as_mut() {
         e.llama_system_info = embed::engine::system_info();
     }
-    let cwd = std::env::current_dir().unwrap_or(dir);
-    if let Err(e) = report::write(&mut r, &cwd) {
-        eprintln!("보고서를 저장하지 못했습니다: {e}");
-        std::process::exit(1);
-    }
+    save(&mut r, true);
+    println!("\n저장 위치: {}", out.display());
     if interactive {
-        println!("\n완료되었습니다. kra-diag-summary.txt 와 kra-diag-report.json 을 확인해 주세요. Enter 키를 누르면 닫힙니다.");
-        let mut s = String::new();
-        let _ = std::io::stdin().read_line(&mut s);
+        pause("완료되었습니다. kra-diag-summary.txt 와 kra-diag-report.json 을 확인해 주세요. Enter 키를 누르면 닫힙니다.");
     }
+}
+
+fn pause(msg: &str) {
+    println!("\n{msg}");
+    let mut s = String::new();
+    let _ = std::io::stdin().read_line(&mut s);
+}
+
+fn clone_extract(x: &report::ExtractInfo) -> report::ExtractInfo {
+    serde_json::from_value(serde_json::to_value(x).unwrap()).unwrap()
 }

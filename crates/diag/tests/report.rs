@@ -102,3 +102,27 @@ fn report_never_contains_file_bytes() {
     }
     assert!(json.contains("텍스트"), "text-like file should be labeled, not hex-dumped");
 }
+
+#[test]
+fn summary_has_utf8_bom_for_old_notepad() {
+    let out_dir = std::env::temp_dir().join("kra-diag-out6");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_kra-diag")).args(["bench", "--skip-flat", "--models"]).arg(out_dir.join("nope")).current_dir(&out_dir).status().unwrap();
+    assert!(st.success());
+    let bytes = std::fs::read(out_dir.join("kra-diag-summary.txt")).unwrap();
+    assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+}
+
+#[cfg(unix)]
+#[test]
+fn falls_back_when_working_dir_is_not_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let ro = std::env::temp_dir().join("kra-diag-ro");
+    std::fs::create_dir_all(&ro).unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_kra-diag")).args(["bench", "--skip-flat", "--models", "nope"]).current_dir(&ro).status().unwrap();
+    std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(st.success());
+    let exe_dir = std::path::Path::new(env!("CARGO_BIN_EXE_kra-diag")).parent().unwrap().to_path_buf();
+    assert!(exe_dir.join("kra-diag-report.json").exists(), "report should fall back to the exe folder");
+}

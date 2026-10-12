@@ -53,65 +53,136 @@ fn percentile(v: &mut [f64], p: f64) -> Option<f64> {
     Some(v[((v.len() - 1) as f64 * p).round() as usize])
 }
 
-pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>) -> ExtractInfo {
-    let start = Instant::now();
+struct Acc {
+    x: ExtractInfo,
+    magics: HashMap<String, usize>,
+    ratios: Vec<f64>,
+    chunk_counts: Vec<f64>,
+    start: Instant,
+}
+
+impl Acc {
+    /// 누적값으로 보고서용 통계를 만든다(중간 저장과 최종 결과에 공통).
+    fn snapshot(&self) -> ExtractInfo {
+        let mut x = ExtractInfo { not_container_magic_top: vec![], ..clone_counts(&self.x) };
+        // 알 수 없는 이진 헤더는 5개 이상 같은 경우(형식 시그니처일 가능성)만 남기고 나머지는 합친다.
+        let mut merged: HashMap<String, usize> = HashMap::new();
+        for (label, n) in &self.magics {
+            let key = if label.starts_with("기타:") && *n < 5 { "기타(5건 미만)".to_string() } else { label.clone() };
+            *merged.entry(key).or_default() += n;
+        }
+        let mut top: Vec<(String, usize)> = merged.into_iter().collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        top.truncate(10);
+        x.not_container_magic_top = top;
+        x.tokens_per_1k_chars_median = percentile(&mut self.ratios.clone(), 0.5);
+        x.chunks_per_doc_p50 = percentile(&mut self.chunk_counts.clone(), 0.5);
+        x.chunks_per_doc_p90 = percentile(&mut self.chunk_counts.clone(), 0.9);
+        x.elapsed_sec = self.start.elapsed().as_secs_f64();
+        x
+    }
+}
+
+fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
+    ExtractInfo {
+        total: x.total,
+        processed: x.processed,
+        ok: x.ok,
+        distribution: x.distribution,
+        encrypted: x.encrypted,
+        drm: x.drm,
+        corrupt: x.corrupt,
+        unsupported: x.unsupported,
+        not_container: x.not_container,
+        timeout: x.timeout,
+        crashed: x.crashed,
+        ..Default::default()
+    }
+}
+
+/// 실제 실행: 파일마다 `kra-diag extract-one` 자식 프로세스(30초 제한). 200개마다 중간 결과를 알린다.
+pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>, on_progress: &mut dyn FnMut(&ExtractInfo)) -> ExtractInfo {
+    let exe = std::env::current_exe().expect("current exe");
+    let extract = |f: &Path| {
+        let mut cmd = Command::new(&exe);
+        cmd.arg("extract-one").arg(f);
+        run_command(cmd, Duration::from_secs(30))
+    };
+    run_with(roots, tokenizer, &extract, 200, on_progress)
+}
+
+pub fn run_with(
+    roots: &[PathBuf],
+    tokenizer: Option<&Tokenizer>,
+    extract: &dyn Fn(&Path) -> Outcome,
+    every: usize,
+    on_progress: &mut dyn FnMut(&ExtractInfo),
+) -> ExtractInfo {
     let mut files = Vec::new();
     for r in roots {
         walk(r, &mut files);
     }
-    let exe = std::env::current_exe().expect("current exe");
-    let mut x = ExtractInfo { total: files.len(), ..Default::default() };
-    let mut magics: HashMap<String, usize> = HashMap::new();
-    let (mut ratios, mut chunk_counts) = (Vec::new(), Vec::new());
+    let mut a = Acc {
+        x: ExtractInfo { total: files.len(), ..Default::default() },
+        magics: HashMap::new(),
+        ratios: Vec::new(),
+        chunk_counts: Vec::new(),
+        start: Instant::now(),
+    };
     for (i, f) in files.iter().enumerate() {
         eprint!("\r문서 확인 중 {}/{}", i + 1, files.len());
-        let mut cmd = Command::new(&exe);
-        cmd.arg("extract-one").arg(f);
-        match run_command(cmd, Duration::from_secs(30)) {
+        match extract(f) {
             Outcome::Ok { doc, distribution } => {
-                x.ok += 1;
-                x.distribution += distribution as usize;
+                a.x.ok += 1;
+                a.x.distribution += distribution as usize;
                 if let Some(tk) = tokenizer {
                     let text: String = doc.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
                     let chars = text.chars().count();
                     if chars >= 200 {
                         if let Ok(t) = tk.count(&text) {
-                            ratios.push(t as f64 * 1000.0 / chars as f64);
+                            a.ratios.push(t as f64 * 1000.0 / chars as f64);
                         }
                     }
                     let count = |s: &str| tk.count(s).unwrap_or_else(|_| s.chars().count());
                     let n = build_chunks(&doc, &ChunkParams { target_tokens: 400, max_tokens: 500, max_chunks: 2000 }, &count).len();
-                    chunk_counts.push(n as f64);
+                    a.chunk_counts.push(n as f64);
                 }
             }
             Outcome::Failed { kind, magic } => match kind {
-                FailKind::Encrypted => x.encrypted += 1,
-                FailKind::Drm => x.drm += 1,
-                FailKind::Corrupt => x.corrupt += 1,
-                FailKind::Unsupported => x.unsupported += 1,
+                FailKind::Encrypted => a.x.encrypted += 1,
+                FailKind::Drm => a.x.drm += 1,
+                FailKind::Corrupt => a.x.corrupt += 1,
+                FailKind::Unsupported => a.x.unsupported += 1,
                 FailKind::NotContainer => {
-                    x.not_container += 1;
-                    *magics.entry(extract::magic::report_label(&magic)).or_default() += 1;
+                    a.x.not_container += 1;
+                    *a.magics.entry(extract::magic::report_label(&magic)).or_default() += 1;
                 }
             },
-            Outcome::Timeout => x.timeout += 1,
-            Outcome::Crashed { .. } => x.crashed += 1,
+            Outcome::Timeout => a.x.timeout += 1,
+            Outcome::Crashed { .. } => a.x.crashed += 1,
+        }
+        a.x.processed = i + 1;
+        if every > 0 && (i + 1) % every == 0 {
+            on_progress(&a.snapshot());
         }
     }
     eprintln!();
-    // 알 수 없는 이진 헤더는 5개 이상 같은 경우(형식 시그니처일 가능성)만 남기고 나머지는 합친다.
-    let mut merged: HashMap<String, usize> = HashMap::new();
-    for (label, n) in magics {
-        let key = if label.starts_with("기타:") && n < 5 { "기타(5건 미만)".to_string() } else { label };
-        *merged.entry(key).or_default() += n;
+    a.snapshot()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn progress_callback_reports_partial_results() {
+        let dir = std::env::temp_dir().join("kra-diag-progress");
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..3 {
+            std::fs::write(dir.join(format!("{i}.hwp")), b"NOT-A-HWP").unwrap();
+        }
+        let mut seen = Vec::new();
+        let fake = |_: &std::path::Path| extract::runner::Outcome::Failed { kind: extract::hwp::FailKind::NotContainer, magic: "4e4f54".into() };
+        let x = super::run_with(&[dir], None, &fake, 1, &mut |p| seen.push(p.processed));
+        assert_eq!(x.processed, 3);
+        assert_eq!(seen, vec![1, 2, 3]);
     }
-    let mut top: Vec<(String, usize)> = merged.into_iter().collect();
-    top.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    top.truncate(10);
-    x.not_container_magic_top = top;
-    x.tokens_per_1k_chars_median = percentile(&mut ratios, 0.5);
-    x.chunks_per_doc_p50 = percentile(&mut chunk_counts, 0.5);
-    x.chunks_per_doc_p90 = percentile(&mut chunk_counts, 0.9);
-    x.elapsed_sec = start.elapsed().as_secs_f64();
-    x
 }

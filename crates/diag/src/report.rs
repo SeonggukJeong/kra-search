@@ -68,9 +68,11 @@ pub struct FlatBench {
     pub result_checksum: u64,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, serde::Deserialize, Default)]
 pub struct ExtractInfo {
     pub total: usize,
+    /// 지금까지 확인한 파일 수(중간 저장이면 total 보다 작다)
+    pub processed: usize,
     pub ok: usize,
     pub distribution: usize,
     pub encrypted: usize,
@@ -164,8 +166,8 @@ pub fn summarize(r: &Report) -> Vec<String> {
     if let Some(x) = &r.extract {
         let top: Vec<String> = x.not_container_magic_top.iter().take(3).map(|(m, c)| format!("{m}×{c}")).collect();
         s.push(format!(
-            "HWP {}개: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · HWP아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · {:.0}초",
-            thousands(x.total as f64), pct(x.ok, x.total), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
+            "HWP {}개{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · HWP아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · {:.0}초",
+            thousands(x.total as f64), if x.processed < x.total { format!("(중간 저장 — {}개 확인)", thousands(x.processed as f64)) } else { String::new() }, pct(x.ok, x.processed.max(1)), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
             x.not_container, if top.is_empty() { "-".into() } else { top.join(" ") }, x.timeout, x.crashed,
             x.tokens_per_1k_chars_median.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
             x.chunks_per_doc_p50.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
@@ -176,13 +178,36 @@ pub fn summarize(r: &Report) -> Vec<String> {
     s
 }
 
-/// `dir`에 kra-diag-report.json, kra-diag-summary.txt 를 쓴다.
-pub fn write(r: &mut Report, dir: &Path) -> std::io::Result<()> {
+/// 보고서를 쓸 폴더: 실행 폴더에 쓸 수 있으면 거기, 아니면 exe 폴더, 그래도 안 되면 임시 폴더.
+pub fn output_dir(cwd: &Path, exe_dir: &Path) -> std::path::PathBuf {
+    for d in [cwd, exe_dir, &std::env::temp_dir()] {
+        let probe = d.join(".kra-diag-write-test");
+        if std::fs::write(&probe, b"").is_ok() {
+            let _ = std::fs::remove_file(probe);
+            return d.to_path_buf();
+        }
+    }
+    std::env::temp_dir()
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// `dir`에 kra-diag-report.json, kra-diag-summary.txt 를 쓴다(임시 파일 후 교체 — 중간에 멈춰도 직전 결과가 남는다).
+/// 요약 파일은 오래된 메모장에서도 한글이 보이도록 UTF-8 BOM을 붙인다. `print` 이면 요약을 화면에도 출력한다.
+pub fn write(r: &mut Report, dir: &Path, print: bool) -> std::io::Result<()> {
     r.summary = summarize(r);
-    std::fs::write(dir.join("kra-diag-report.json"), serde_json::to_string_pretty(r)?)?;
-    std::fs::write(dir.join("kra-diag-summary.txt"), r.summary.join("\n") + "\n")?;
-    for l in &r.summary {
-        println!("{l}");
+    write_atomic(&dir.join("kra-diag-report.json"), serde_json::to_string_pretty(r)?.as_bytes())?;
+    let mut txt = vec![0xEF, 0xBB, 0xBF];
+    txt.extend_from_slice((r.summary.join("\r\n") + "\r\n").as_bytes());
+    write_atomic(&dir.join("kra-diag-summary.txt"), &txt)?;
+    if print {
+        for l in &r.summary {
+            println!("{l}");
+        }
     }
     Ok(())
 }
