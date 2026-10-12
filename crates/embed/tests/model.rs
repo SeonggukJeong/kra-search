@@ -76,3 +76,19 @@ fn embeds_overlong_input_truncated() {
     assert_eq!(r[0].n_tokens, 1024);
     assert!(truncate_normalize(&r[0].vector, 768).is_some());
 }
+
+#[test]
+#[ignore = "needs model file"]
+fn long_table_header_with_real_tokenizer_terminates() {
+    use doc::{Block, BlockKind, Document};
+    use embed::chunk::{build_chunks, ChunkParams};
+    let m = Embedder::load(&model(), &opts()).unwrap();
+    let mut blocks = vec![Block { kind: BlockKind::TableHeader, text: "구분 | 금액 | 비고 ".repeat(120) }];
+    blocks.push(Block { kind: BlockKind::TableRow, text: "구분: 인건비 | 금액: 100".into() });
+    let d = Document { title: None, blocks };
+    let count = |s: &str| m.token_count(s).unwrap();
+    let t = std::time::Instant::now();
+    let c = build_chunks(&d, &ChunkParams { target_tokens: 400, max_tokens: 500, max_chunks: 2000 }, &count);
+    assert!(t.elapsed().as_secs() < 10, "took {:?}", t.elapsed());
+    assert!(!c.is_empty() && c.iter().all(|x| count(x) <= 500));
+}

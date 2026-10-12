@@ -61,7 +61,11 @@ fn split_long(text: &str, max: usize, count: &dyn Fn(&str) -> usize) -> Vec<Stri
             break;
         }
         let head = cut_to(rest, max, count);
-        let cut = head.rfind(['.', '\n']).map(|i| i + 1).filter(|i| *i > head.len() / 2).unwrap_or(head.len());
+        let mut cut = head.rfind(['.', '\n']).map(|i| i + 1).filter(|i| *i > head.len() / 2).unwrap_or(head.len());
+        if cut == 0 {
+            // 한도가 글자 하나보다 작아도 반드시 앞으로 나아간다(무한 반복 방지).
+            cut = rest.chars().next().map_or(rest.len(), char::len_utf8);
+        }
         out.push(rest[..cut].trim().to_string());
         rest = rest[cut..].trim_start();
     }
@@ -92,8 +96,17 @@ pub fn build_chunks(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usi
             }
             BlockKind::TableHeader => {
                 flush(&mut cur, &mut chunks);
-                table_header = Some(text.to_string());
-                cur.push(text.to_string());
+                // 반복해서 붙일 머리글은 한도의 1/3 이내로 줄인다. 원래 머리글이 길면 그 전문은 따로 청크로 남긴다.
+                let short = cut_to(text, p.max_tokens / 3, count);
+                if short.len() < text.len() {
+                    chunks.extend(split_long(text, p.max_tokens, count));
+                }
+                if short.trim().is_empty() {
+                    table_header = None;
+                } else {
+                    cur.push(short.clone());
+                    table_header = Some(short);
+                }
             }
             BlockKind::Paragraph | BlockKind::TableRow => {
                 if b.kind == BlockKind::Paragraph {
@@ -181,6 +194,39 @@ mod tests {
         let c = build_chunks(&d, &ChunkParams { target_tokens: 100, max_tokens: 120, max_chunks: 100 }, &chars);
         assert!(c.len() > 5 && c.iter().all(|x| chars(x) <= 120));
     }
+    /// 실제 토크나이저처럼 빈 문자열도 특수 토큰 2개로 센다.
+    fn chars_plus_special(s: &str) -> usize {
+        s.chars().count() + 2
+    }
+
+    #[test]
+    fn long_table_header_terminates_and_respects_max() {
+        let header = "열".repeat(600);
+        let mut blocks = vec![b(TableHeader, &header)];
+        for i in 0..3 {
+            blocks.push(b(TableRow, &format!("행{i}: 값")));
+        }
+        let d = Document { title: None, blocks };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let c = build_chunks(&d, &ChunkParams { target_tokens: 80, max_tokens: 100, max_chunks: 2000 }, &chars_plus_special);
+            let _ = tx.send(c);
+        });
+        let c = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("build_chunks did not finish");
+        assert!(c.len() < 50, "{} chunks", c.len());
+        assert!(c.iter().all(|x| chars_plus_special(x) <= 100), "oversized chunk");
+    }
+
+    #[test]
+    fn split_long_always_makes_progress() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(split_long("가나다라마바사", 2, &chars_plus_special));
+        });
+        let parts = rx.recv_timeout(std::time::Duration::from_secs(5)).expect("split_long did not finish");
+        assert_eq!(parts.concat(), "가나다라마바사");
+    }
+
     #[test]
     fn max_chunks_caps_output() {
         let d = Document { title: None, blocks: (0..50).map(|_| b(Paragraph, &"가".repeat(100))).collect() };
