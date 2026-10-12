@@ -26,6 +26,16 @@ jobs:
           $dlls | ForEach-Object { Copy-Item $_.FullName target/release/ }
           $dlls | ForEach-Object { Copy-Item $_.FullName target/release/deps/ }
       - run: cargo test --workspace --release
+      - name: cache dev models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: gguf-${{ hashFiles('tools/fetch-models.sh') }}
+      - name: model tests (real EmbeddingGemma 2 on this OS)
+        shell: bash
+        run: |
+          bash tools/fetch-models.sh
+          cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1
   deny:
     runs-on: ubuntu-latest
     steps:

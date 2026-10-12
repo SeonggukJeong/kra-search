@@ -49,7 +49,9 @@ fn main() {
         cfg.define("BUILD_SHARED_LIBS", "ON")
             .define("GGML_BACKEND_DL", "ON")
             .define("GGML_CPU_ALL_VARIANTS", "ON")
-            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreaded");
+            // DLL마다 정적 CRT를 넣으면 DLL 사이에서 CRT 자원(힙·FILE*)이 섞여 fast-fail(0xC0000409)로 죽는다.
+            // → llama/ggml DLL은 동적 CRT(/MD). 배포 시 VC++ 런타임 DLL을 exe 옆에 함께 둔다.
+            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
     } else {
         cfg.define("BUILD_SHARED_LIBS", "OFF");
     }

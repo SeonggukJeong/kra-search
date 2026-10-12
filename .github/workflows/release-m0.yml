@@ -24,6 +24,8 @@ jobs:
           mkdir -p $OUT/models
           cp target/release/kra-diag.exe $OUT/
           find target/release/build -path '*llama-sys*' -name '*.dll' -exec cp {} $OUT/ \;
+          # llama/ggml DLL이 쓰는 VC++ 런타임을 exe 옆에 둔다(앱 로컬 배포 — 별도 설치 불필요)
+          for f in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do cp "/c/Windows/System32/$f" $OUT/; done
           bash tools/fetch-models.sh
           cp models/*.gguf $OUT/models/
           cp docs/m0/README-diag.txt $OUT/
