@@ -53,13 +53,20 @@ fn main() {
             // DLL마다 정적 CRT를 넣으면 DLL 사이에서 CRT 자원(힙·FILE*)이 섞여 fast-fail(0xC0000409)로 죽는다.
             // → llama/ggml DLL은 동적 CRT(/MD). 배포 시 VC++ 런타임 DLL을 exe 옆에 함께 둔다.
             .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
-        if env::var("KRA_LLAMA_COMPILER").as_deref() != Ok("clang") {
-            // C++ 예외 사용(llama.cpp/gguf 는 try/throw 를 쓴다).
-            cfg.cxxflag("/EHsc");
-        }
-        // 실험용: KRA_LLAMA_COMPILER=clang 이면 upstream 릴리즈처럼 Ninja + clang/clang++ 로 빌드한다.
+        // cmake 크레이트는 CMAKE_<LANG>_FLAGS_RELEASE 를 cc 크레이트 값(-nologo -MT -Brepro)으로 덮어써
+        // 최적화(/O2)가 빠진다(실측: 초당 29토큰). 직접 지정하면 cmake 크레이트가 덮어쓰지 않는다.
         if env::var("KRA_LLAMA_COMPILER").as_deref() == Ok("clang") {
-            cfg.generator("Ninja").define("CMAKE_C_COMPILER", "clang").define("CMAKE_CXX_COMPILER", "clang++");
+            // 실험용: upstream 릴리즈처럼 Ninja + clang/clang++
+            cfg.generator("Ninja")
+                .define("CMAKE_C_COMPILER", "clang")
+                .define("CMAKE_CXX_COMPILER", "clang++")
+                .define("CMAKE_C_FLAGS_RELEASE", "-O3 -DNDEBUG")
+                .define("CMAKE_CXX_FLAGS_RELEASE", "-O3 -DNDEBUG");
+        } else {
+            cfg.define("CMAKE_C_FLAGS", "/nologo /W0 /utf-8")
+                .define("CMAKE_CXX_FLAGS", "/nologo /W0 /utf-8 /EHsc")
+                .define("CMAKE_C_FLAGS_RELEASE", "/O2 /Ob2 /DNDEBUG")
+                .define("CMAKE_CXX_FLAGS_RELEASE", "/O2 /Ob2 /DNDEBUG");
         }
     } else {
         cfg.define("BUILD_SHARED_LIBS", "OFF");
