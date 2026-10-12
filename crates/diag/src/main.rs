@@ -75,10 +75,10 @@ fn harden_dll_search() {
     }
 }
 
-fn first_model(dir: &Path, backend: &Path) -> Option<embed::engine::Embedder> {
+/// 토큰 통계용 토크나이저(가중치 없이 어휘만 로드 — 부모 프로세스가 수 시간 동안 모델 전체를 들고 있지 않게).
+fn first_tokenizer(dir: &Path, backend: &Path) -> Option<embed::engine::Tokenizer> {
     let m = bench::list_models(dir).into_iter().next()?;
-    let opts = embed::engine::EngineOptions { threads: 2, max_tokens: 1024, backend_dir: Some(backend.to_path_buf()) };
-    embed::engine::Embedder::load(&m, &opts).ok()
+    embed::engine::Tokenizer::load(&m, Some(backend)).ok()
 }
 
 fn roots_or_default(r: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -110,7 +110,7 @@ fn main() {
             let models = models.unwrap_or_else(|| dir.join("models"));
             r.bench = Some(bench::run(&models, skip_flat, flat_n));
             r.env = Some(env::collect());
-            let tk = first_model(&models, &dir);
+            let tk = first_tokenizer(&models, &dir);
             r.extract = Some(extract_stats::run(&roots_or_default(root), tk.as_ref()));
         }
         Cmd::Env => {
@@ -121,7 +121,7 @@ fn main() {
             r.bench = Some(bench::run(&models.unwrap_or_else(|| dir.join("models")), skip_flat, flat_n));
         }
         Cmd::ExtractStats { root, models } => {
-            let tk = first_model(&models.unwrap_or_else(|| dir.join("models")), &dir);
+            let tk = first_tokenizer(&models.unwrap_or_else(|| dir.join("models")), &dir);
             r.extract = Some(extract_stats::run(&roots_or_default(root), tk.as_ref()));
         }
         Cmd::ExtractOne { .. } | Cmd::BenchOne { .. } => unreachable!(),

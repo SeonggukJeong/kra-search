@@ -2,7 +2,7 @@
 
 use crate::report::ExtractInfo;
 use embed::chunk::{build_chunks, ChunkParams};
-use embed::engine::Embedder;
+use embed::engine::Tokenizer;
 use extract::hwp::FailKind;
 use extract::runner::{run_command, Outcome};
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ fn percentile(v: &mut [f64], p: f64) -> Option<f64> {
     Some(v[((v.len() - 1) as f64 * p).round() as usize])
 }
 
-pub fn run(roots: &[PathBuf], tokenizer: Option<&Embedder>) -> ExtractInfo {
+pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>) -> ExtractInfo {
     let start = Instant::now();
     let mut files = Vec::new();
     for r in roots {
@@ -75,11 +75,11 @@ pub fn run(roots: &[PathBuf], tokenizer: Option<&Embedder>) -> ExtractInfo {
                     let text: String = doc.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
                     let chars = text.chars().count();
                     if chars >= 200 {
-                        if let Ok(t) = tk.token_count(&text) {
+                        if let Ok(t) = tk.count(&text) {
                             ratios.push(t as f64 * 1000.0 / chars as f64);
                         }
                     }
-                    let count = |s: &str| tk.token_count(s).unwrap_or_else(|_| s.chars().count());
+                    let count = |s: &str| tk.count(s).unwrap_or_else(|_| s.chars().count());
                     let n = build_chunks(&doc, &ChunkParams { target_tokens: 400, max_tokens: 500, max_chunks: 2000 }, &count).len();
                     chunk_counts.push(n as f64);
                 }

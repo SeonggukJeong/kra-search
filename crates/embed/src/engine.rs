@@ -64,6 +64,60 @@ pub fn system_info() -> String {
     unsafe { CStr::from_ptr(llama_print_system_info()).to_string_lossy().into_owned() }
 }
 
+fn tokenize_with(vocab: *const llama_vocab, text: &str) -> Result<Vec<llama_token>, EmbedError> {
+    let call = |buf: &mut Vec<llama_token>| unsafe {
+        llama_tokenize(vocab, text.as_ptr() as *const c_char, text.len() as i32, buf.as_mut_ptr(), buf.len() as i32, true, false)
+    };
+    let mut buf = vec![0 as llama_token; text.len() + 8];
+    let mut n = call(&mut buf);
+    if n < 0 {
+        buf.resize((-n) as usize, 0);
+        n = call(&mut buf);
+        if n < 0 {
+            return Err(EmbedError::Tokenize);
+        }
+    }
+    buf.truncate(n as usize);
+    Ok(buf)
+}
+
+/// 토큰 수만 세는 가벼운 토크나이저(가중치를 읽지 않는 vocab_only 로드). 진단 통계용.
+pub struct Tokenizer {
+    model: *mut llama_model,
+    vocab: *const llama_vocab,
+}
+unsafe impl Send for Tokenizer {}
+
+impl Tokenizer {
+    pub fn load(model_path: &Path, backend_dir: Option<&Path>) -> Result<Self, EmbedError> {
+        if !model_path.is_file() {
+            return Err(EmbedError::ModelNotFound(model_path.display().to_string()));
+        }
+        init_backend(backend_dir)?;
+        let cpath = CString::new(model_path.to_string_lossy().as_bytes())
+            .map_err(|_| EmbedError::ModelNotFound(model_path.display().to_string()))?;
+        unsafe {
+            let mut mp = llama_model_default_params();
+            mp.vocab_only = true;
+            let model = llama_model_load_from_file(cpath.as_ptr(), mp);
+            if model.is_null() {
+                return Err(EmbedError::ModelLoad(model_path.display().to_string()));
+            }
+            Ok(Self { model, vocab: llama_model_get_vocab(model) })
+        }
+    }
+
+    pub fn count(&self, text: &str) -> Result<usize, EmbedError> {
+        Ok(tokenize_with(self.vocab, text)?.len())
+    }
+}
+
+impl Drop for Tokenizer {
+    fn drop(&mut self) {
+        unsafe { llama_model_free(self.model) }
+    }
+}
+
 pub struct Embedder {
     model: *mut llama_model,
     ctx: *mut llama_context,
@@ -123,28 +177,7 @@ impl Embedder {
     }
 
     fn tokenize(&self, text: &str) -> Result<Vec<llama_token>, EmbedError> {
-        let call = |buf: &mut Vec<llama_token>| unsafe {
-            llama_tokenize(
-                self.vocab,
-                text.as_ptr() as *const c_char,
-                text.len() as i32,
-                buf.as_mut_ptr(),
-                buf.len() as i32,
-                true,
-                false,
-            )
-        };
-        let mut buf = vec![0 as llama_token; text.len() + 8];
-        let mut n = call(&mut buf);
-        if n < 0 {
-            buf.resize((-n) as usize, 0);
-            n = call(&mut buf);
-            if n < 0 {
-                return Err(EmbedError::Tokenize);
-            }
-        }
-        buf.truncate(n as usize);
-        Ok(buf)
+        tokenize_with(self.vocab, text)
     }
 
     pub fn token_count(&self, text: &str) -> Result<usize, EmbedError> {

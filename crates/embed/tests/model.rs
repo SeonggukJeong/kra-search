@@ -92,3 +92,20 @@ fn long_table_header_with_real_tokenizer_terminates() {
     assert!(t.elapsed().as_secs() < 10, "took {:?}", t.elapsed());
     assert!(!c.is_empty() && c.iter().all(|x| count(x) <= 500));
 }
+
+#[test]
+#[ignore = "needs model file"]
+fn vocab_only_tokenizer_matches_embedder() {
+    use embed::engine::Tokenizer;
+    let t = Tokenizer::load(&model(), None).unwrap();
+    let m = Embedder::load(&model(), &opts()).unwrap();
+    for s in ["경마 매출 감소 원인", "title: none | text: 제1조(목적) 이 규정은…", "a"] {
+        assert_eq!(t.count(s).unwrap(), m.token_count(s).unwrap(), "{s}");
+    }
+}
+
+#[test]
+fn tokenizer_missing_model_is_clear_error() {
+    use embed::engine::Tokenizer;
+    assert!(matches!(Tokenizer::load(std::path::Path::new("/no/such.gguf"), None).err().unwrap(), EmbedError::ModelNotFound(_)));
+}
