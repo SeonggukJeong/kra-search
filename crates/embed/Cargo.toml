@@ -6,5 +6,6 @@ license.workspace = true
 
 [dependencies]
 doc = { path = "../doc" }
+llama-sys = { path = "../llama-sys" }
 thiserror.workspace = true
 serde.workspace = true

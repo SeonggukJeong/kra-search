@@ -101,6 +101,7 @@ name = "embed"
 version = "0.0.1"
 dependencies = [
  "doc",
+ "llama-sys",
  "serde",
  "thiserror",
 ]
