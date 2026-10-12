@@ -1,0 +1,29 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-latest, windows-latest] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: libclang (windows)
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - run: cargo build --workspace --release
+      - name: put llama DLLs next to binaries (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dlls = Get-ChildItem target/release/build -Recurse -Filter *.dll | Where-Object { $_.FullName -match 'llama-sys' }
+          $dlls | ForEach-Object { Copy-Item $_.FullName target/release/ }
+          $dlls | ForEach-Object { Copy-Item $_.FullName target/release/deps/ }
+      - run: cargo test --workspace --release
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
