@@ -25,7 +25,7 @@ fn main() {
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     println!("cargo:rerun-if-changed=wrapper.h");
     println!("cargo:rerun-if-changed=patches");
-    println!("cargo:rerun-if-env-changed=KRA_LLAMA_TOOLSET");
+    println!("cargo:rerun-if-env-changed=KRA_LLAMA_COMPILER");
     apply_patches(&src, &manifest.join("patches"));
     println!("cargo:rerun-if-changed=vendor/llama.cpp/include/llama.h");
 
@@ -52,14 +52,14 @@ fn main() {
             .define("GGML_CPU_ALL_VARIANTS", "ON")
             // DLL마다 정적 CRT를 넣으면 DLL 사이에서 CRT 자원(힙·FILE*)이 섞여 fast-fail(0xC0000409)로 죽는다.
             // → llama/ggml DLL은 동적 CRT(/MD). 배포 시 VC++ 런타임 DLL을 exe 옆에 함께 둔다.
-            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL")
-            // C++ 예외 사용(llama.cpp/gguf 는 try/throw 를 쓴다). clang-cl 은 기본으로 꺼져 있다.
-            .cxxflag("/EHsc");
-        // 실험용: KRA_LLAMA_TOOLSET=ClangCL 이면 Visual Studio 생성기에서 clang-cl 로 빌드한다.
-        if let Ok(t) = env::var("KRA_LLAMA_TOOLSET") {
-            if !t.is_empty() {
-                cfg.generator_toolset(t);
-            }
+            .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+        if env::var("KRA_LLAMA_COMPILER").as_deref() != Ok("clang") {
+            // C++ 예외 사용(llama.cpp/gguf 는 try/throw 를 쓴다).
+            cfg.cxxflag("/EHsc");
+        }
+        // 실험용: KRA_LLAMA_COMPILER=clang 이면 upstream 릴리즈처럼 Ninja + clang/clang++ 로 빌드한다.
+        if env::var("KRA_LLAMA_COMPILER").as_deref() == Ok("clang") {
+            cfg.generator("Ninja").define("CMAKE_C_COMPILER", "clang").define("CMAKE_CXX_COMPILER", "clang++");
         }
     } else {
         cfg.define("BUILD_SHARED_LIBS", "OFF");
