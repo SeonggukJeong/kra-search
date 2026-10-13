@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::{env, process::Command};
 
 /// patches/*.patch 를 vendor/llama.cpp 에 한 번만 적용한다(이미 적용돼 있으면 건너뜀).
+/// 패치 목록·이유: patches/README.md · 적용 확인 테스트: tests/patches.rs
 fn apply_patches(src: &Path, dir: &Path) {
     let mut patches: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "patch")).collect())
@@ -15,7 +16,11 @@ fn apply_patches(src: &Path, dir: &Path) {
         if git(&["apply", "--reverse", "--check"]) {
             continue;
         }
-        assert!(git(&["apply"]), "failed to apply {}", p.display());
+        assert!(
+            git(&["apply"]),
+            "failed to apply {} — llama.cpp 를 올렸다면 패치를 새 소스에 맞춰 다시 만든다: docs/engineering/runbooks/upgrade-llama-cpp.md",
+            p.display()
+        );
     }
 }
 

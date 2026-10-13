@@ -36,6 +36,8 @@ jobs:
         run: |
           bash tools/fetch-models.sh
           cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1
+          # llama.cpp 로컬 패치(logits 버퍼 미할당)가 빠지면 메모리가 1GB 늘어 여기서 떨어진다 — INC-004
+          cargo test -p diag --release --test memory -- --include-ignored --test-threads 1
   deny:
     runs-on: ubuntu-latest
     steps:
