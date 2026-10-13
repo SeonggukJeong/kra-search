@@ -2,7 +2,7 @@
 
 use crate::cache::{get_or_compute, Vectors};
 use crate::corpus::{EvalDoc, Query};
-use crate::metrics::{ndcg_at_k, recall_at_k};
+use crate::metrics::{first_relevant_rank, ndcg_at_k, recall_at_k};
 use embed::chunk::{build_card, build_chunks, ChunkParams};
 use embed::engine::{Embedder, EngineOptions};
 use embed::profile::ModelProfile;
@@ -211,6 +211,36 @@ pub fn quality_table(runs: &[ModelRun], queries: &[Query]) -> String {
     rows.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (_, r) in rows {
         writeln!(s, "{r}").unwrap();
+    }
+    s
+}
+
+/// 질의별 첫 정답 순위(본문 청크 점수). 질의 수가 적은 유형(마사회 세트)에서 어느 질의가 틀리는지 보려고 쓴다.
+pub fn per_query_table(runs: &[ModelRun], queries: &[Query], kind_prefix: &str, dim: usize, size: usize) -> String {
+    let mut s = String::new();
+    let cols: Vec<(&ModelRun, HashMap<String, Vec<String>>)> = runs
+        .iter()
+        .filter(|r| r.chunks.contains_key(&size))
+        .map(|r| (r, rank(r, dim, size, Strategy::Chunk)))
+        .collect();
+    let names: String = cols.iter().map(|(r, _)| format!(" {} |", r.name)).collect();
+    writeln!(s, "| 질의 | 유형 | 검색어 |{names}").unwrap();
+    writeln!(s, "|---|---|---|{}", "---|".repeat(cols.len())).unwrap();
+    for q in queries.iter().filter(|q| q.kind.starts_with(kind_prefix)) {
+        let ranks: String = cols
+            .iter()
+            .map(|(_, ranked)| {
+                let r = &ranked[&q.qid];
+                match first_relevant_rank(r, &q.relevant) {
+                    Some(1) => " 1 |".to_string(),
+                    // 1위를 함께 적어 정답 쪽 문제(형제 문서)인지 검색 쪽 문제인지 가린다.
+                    Some(n) if n > 10 => format!(" **{n}** (1위 {}) |", r[0]),
+                    Some(n) => format!(" {n} (1위 {}) |", r[0]),
+                    None => " - |".to_string(),
+                }
+            })
+            .collect();
+        writeln!(s, "| {} | {} | {} |{ranks}", q.qid, q.kind, q.text).unwrap();
     }
     s
 }

@@ -21,6 +21,11 @@ pub fn recall_at_k(ranked: &[String], relevant: &HashSet<String>, k: usize) -> f
     ranked.iter().take(k).filter(|d| relevant.contains(*d)).count() as f64 / relevant.len() as f64
 }
 
+/// 첫 정답 문서의 순위(1부터). 정답이 순위 목록에 없으면 None.
+pub fn first_relevant_rank(ranked: &[String], relevant: &HashSet<String>) -> Option<usize> {
+    ranked.iter().position(|d| relevant.contains(d)).map(|i| i + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,6 +47,11 @@ mod tests {
     #[test]
     fn ndcg_none_is_zero() {
         assert_eq!(ndcg_at_k(&s(&["x"]), &set(&["a"]), 10), 0.0);
+    }
+    #[test]
+    fn first_relevant_rank_is_one_based() {
+        assert_eq!(first_relevant_rank(&s(&["x", "a", "b"]), &set(&["b", "a"])), Some(2));
+        assert_eq!(first_relevant_rank(&s(&["x"]), &set(&["a"])), None);
     }
     #[test]
     fn recall_counts_within_k() {
