@@ -48,6 +48,7 @@ fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
             if let Some(d) = dir {
                 let c = CString::new(d.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
                 ggml_backend_load_all_from_path(c.as_ptr());
+                // 폴더를 줬을 때만 검사: 폴더 없이는 모델 로드 때 지연 로드되어 아직 0이다 — INC-012, INC-013
                 if ggml_backend_dev_count() == 0 {
                     return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
                 }
@@ -170,6 +171,7 @@ impl Embedder {
                 model,
                 ctx,
                 vocab: llama_model_get_vocab(model),
+                // 풀링 출력 차원(768). llama_model_n_embd 는 내부 hidden(512) — INC-002
                 n_embd: llama_model_n_embd_out(model) as usize,
                 max_tokens: opts.max_tokens,
                 encoder_only: llama_model_has_encoder(model) && !llama_model_has_decoder(model),
@@ -234,7 +236,7 @@ impl Embedder {
             }
             batch.n_tokens = k as i32;
             // 임베딩 전용 컨텍스트는 encode 로 처리한다(EmbeddingGemma 2 는 decode 를 호출하면 llama.cpp 가
-            // 경고를 찍고 encode 로 돌린다). encode 를 지원하지 않는 모델이면 decode 로 다시 시도한다.
+            // 경고를 찍고 encode 로 돌린다). encode 를 지원하지 않는 모델이면 decode 로 다시 시도한다. — INC-007
             let mut rc = llama_encode(self.ctx, batch);
             if rc != 0 && !self.encoder_only {
                 rc = llama_decode(self.ctx, batch);

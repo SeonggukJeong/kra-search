@@ -29,6 +29,7 @@ jobs:
           bash tools/fetch-models.sh
           cp models/*.gguf $OUT/models/
           cp docs/m0/README-diag.txt $OUT/
+          cp docs/m0/manual-checks.md $OUT/manual-checks.txt
           ls -la $OUT $OUT/models
           7z a $OUT.zip $OUT > /dev/null
           sha256sum $OUT.zip > $OUT.zip.sha256
