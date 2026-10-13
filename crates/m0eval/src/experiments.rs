@@ -2,7 +2,7 @@
 
 use crate::cache::{Store, Vectors};
 use crate::corpus::{EvalDoc, Query};
-use crate::metrics::{first_relevant_rank, ndcg_at_k, recall_at_k};
+use crate::metrics::{first_relevant_rank, ndcg_at_k, recall_at_k, section_rank};
 use embed::chunk::{build_card, build_chunks, ChunkParams};
 use embed::engine::{Embedder, EngineOptions};
 use embed::profile::ModelProfile;
@@ -245,16 +245,40 @@ pub fn per_query_table(runs: &[ModelRun], queries: &[Query], kind_prefix: &str, 
             .iter()
             .map(|(_, ranked)| {
                 let r = &ranked[&q.qid];
+                // 섹션 = 마사회 문서(K…)만 남긴 순위. 출처별 섹션 화면에서 보일 자리.
+                let sec = section_rank(r, &q.relevant, |d| d.starts_with('K')).map_or("-".to_string(), |n| n.to_string());
                 match first_relevant_rank(r, &q.relevant) {
                     Some(1) => " 1 |".to_string(),
                     // 1위를 함께 적어 정답 쪽 문제(형제 문서)인지 검색 쪽 문제인지 가린다.
-                    Some(n) if n > 10 => format!(" **{n}** (1위 {}) |", r[0]),
-                    Some(n) => format!(" {n} (1위 {}) |", r[0]),
+                    Some(n) if n > 10 => format!(" **{n}** (1위 {} · 섹션 {sec}) |", r[0]),
+                    Some(n) => format!(" {n} (1위 {} · 섹션 {sec}) |", r[0]),
                     None => " - |".to_string(),
                 }
             })
             .collect();
         writeln!(s, "| {} | {} | {} |{ranks}", q.qid, q.kind, q.text).unwrap();
+    }
+    s
+}
+
+/// 출처별 섹션 화면 흉내: 한 목록 상위 k 안에 정답이 든 질의 수 vs 마사회 섹션 상위 k 안.
+pub fn section_table(runs: &[ModelRun], queries: &[Query], kind_prefix: &str, dim: usize, size: usize) -> String {
+    let mut s = String::new();
+    let qs: Vec<&Query> = queries.iter().filter(|q| q.kind.starts_with(kind_prefix)).collect();
+    writeln!(s, "마사회 질의 {}개 중 정답이 보이는 질의 수. 섹션 = 마사회 문서만 따로 모은 목록.\n", qs.len()).unwrap();
+    writeln!(s, "| 모델 | 한 목록 1위 | 한 목록 3위 안 | 한 목록 5위 안 | 섹션 1위 | 섹션 3위 안 | 섹션 5위 안 |").unwrap();
+    writeln!(s, "|---|---|---|---|---|---|---|").unwrap();
+    for run in runs.iter().filter(|r| r.chunks.contains_key(&size)) {
+        let ranked = rank(run, dim, size, Strategy::Chunk);
+        let (mut one, mut sec) = (Vec::new(), Vec::new());
+        for q in &qs {
+            let r = &ranked[&q.qid];
+            one.push(first_relevant_rank(r, &q.relevant).unwrap_or(usize::MAX));
+            sec.push(section_rank(r, &q.relevant, |d| d.starts_with('K')).unwrap_or(usize::MAX));
+        }
+        let within = |v: &[usize], k: usize| v.iter().filter(|&&n| n <= k).count();
+        writeln!(s, "| {} | {} | {} | {} | {} | {} | {} |", run.name,
+            within(&one, 1), within(&one, 3), within(&one, 5), within(&sec, 1), within(&sec, 3), within(&sec, 5)).unwrap();
     }
     s
 }

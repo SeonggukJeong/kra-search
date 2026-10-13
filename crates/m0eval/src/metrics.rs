@@ -26,6 +26,11 @@ pub fn first_relevant_rank(ranked: &[String], relevant: &HashSet<String>) -> Opt
     ranked.iter().position(|d| relevant.contains(d)).map(|i| i + 1)
 }
 
+/// 한 섹션(예: 우리 기관 문서)만 남겼을 때 첫 정답 순위. 출처별 섹션 화면을 흉내 낸다.
+pub fn section_rank(ranked: &[String], relevant: &HashSet<String>, in_section: impl Fn(&str) -> bool) -> Option<usize> {
+    ranked.iter().filter(|d| in_section(d)).position(|d| relevant.contains(d)).map(|i| i + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +57,12 @@ mod tests {
     fn first_relevant_rank_is_one_based() {
         assert_eq!(first_relevant_rank(&s(&["x", "a", "b"]), &set(&["b", "a"])), Some(2));
         assert_eq!(first_relevant_rank(&s(&["x"]), &set(&["a"])), None);
+    }
+    #[test]
+    fn section_rank_ignores_other_sections() {
+        let ranked = s(&["P1", "P2", "K1", "P3", "K2"]);
+        assert_eq!(section_rank(&ranked, &set(&["K2"]), |d| d.starts_with('K')), Some(2));
+        assert_eq!(section_rank(&ranked, &set(&["P3"]), |d| d.starts_with('K')), None);
     }
     #[test]
     fn recall_counts_within_k() {

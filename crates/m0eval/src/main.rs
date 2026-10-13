@@ -65,8 +65,10 @@ fn main() {
         writeln!(s, "| {} | {:.0} |", r.name, r.tokens_per_sec).unwrap();
     }
     if queries.iter().any(|q| q.kind.starts_with("kra")) {
-        writeln!(s, "\n## 5. 마사회 질의별 첫 정답 순위 (512차원 · 청크 400 · 청크 점수, 10위 밖은 굵게)\n\n{}",
+        writeln!(s, "\n## 5. 마사회 질의별 첫 정답 순위 (512차원 · 청크 400 · 청크 점수, 10위 밖은 굵게, 섹션 = 마사회 문서만 남긴 순위)\n\n{}",
             experiments::per_query_table(&runs, &queries, "kra", 512, 400)).unwrap();
+        writeln!(s, "## 6. 출처별 섹션으로 나눠 보여 주면 (512차원 · 청크 400 · 청크 점수)\n\n{}",
+            experiments::section_table(&runs, &queries, "kra", 512, 400)).unwrap();
     }
     std::fs::write(&a.out, s).unwrap();
     eprintln!("저장: {}", a.out.display());
