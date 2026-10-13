@@ -86,6 +86,12 @@ pub struct ExtractInfo {
     pub tokens_per_1k_chars_median: Option<f64>,
     pub chunks_per_doc_p50: Option<f64>,
     pub chunks_per_doc_p90: Option<f64>,
+    /// 추출 커버리지(조판 텍스트 대비 글자 비율)를 잰 문서 수 — 최대 약 500개 표본
+    pub coverage_samples: usize,
+    pub coverage_median: Option<f64>,
+    pub coverage_p10: Option<f64>,
+    /// 커버리지 0.9 미만(본문이 눈에 띄게 빠진) 문서 수
+    pub coverage_below_90: usize,
     pub elapsed_sec: f64,
 }
 
@@ -166,12 +172,16 @@ pub fn summarize(r: &Report) -> Vec<String> {
     if let Some(x) = &r.extract {
         let top: Vec<String> = x.not_container_magic_top.iter().take(3).map(|(m, c)| format!("{m}×{c}")).collect();
         s.push(format!(
-            "HWP {}개{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · HWP아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · {:.0}초",
+            "HWP {}개{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · HWP아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · 추출 커버리지 {} · {:.0}초",
             thousands(x.total as f64), if x.processed < x.total { format!("(중간 저장 — {}개 확인)", thousands(x.processed as f64)) } else { String::new() }, pct(x.ok, x.processed.max(1)), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
             x.not_container, if top.is_empty() { "-".into() } else { top.join(" ") }, x.timeout, x.crashed,
             x.tokens_per_1k_chars_median.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
             x.chunks_per_doc_p50.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
             x.chunks_per_doc_p90.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
+            match (x.coverage_median, x.coverage_p10) {
+                (Some(m), Some(p)) => format!("중앙값 {:.1}% · 하위10% {:.1}% · 90% 미만 {}개/{}개", m * 100.0, p * 100.0, x.coverage_below_90, x.coverage_samples),
+                _ => "-".into(),
+            },
             x.elapsed_sec
         ));
     }

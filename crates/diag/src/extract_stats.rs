@@ -58,8 +58,14 @@ struct Acc {
     magics: HashMap<String, usize>,
     ratios: Vec<f64>,
     chunk_counts: Vec<f64>,
+    coverages: Vec<f64>,
     start: Instant,
 }
+
+/// 커버리지는 조판이 필요해 느리므로 최대 이만큼만 고르게 표본으로 잰다.
+const COVERAGE_SAMPLES: usize = 500;
+/// 이보다 큰 파일은 커버리지를 재지 않는다(조판 시간이 30초 제한에 걸리지 않도록).
+const COVERAGE_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 impl Acc {
     /// 누적값으로 보고서용 통계를 만든다(중간 저장과 최종 결과에 공통).
@@ -78,6 +84,10 @@ impl Acc {
         x.tokens_per_1k_chars_median = percentile(&mut self.ratios.clone(), 0.5);
         x.chunks_per_doc_p50 = percentile(&mut self.chunk_counts.clone(), 0.5);
         x.chunks_per_doc_p90 = percentile(&mut self.chunk_counts.clone(), 0.9);
+        x.coverage_samples = self.coverages.len();
+        x.coverage_median = percentile(&mut self.coverages.clone(), 0.5);
+        x.coverage_p10 = percentile(&mut self.coverages.clone(), 0.1);
+        x.coverage_below_90 = self.coverages.iter().filter(|c| **c < 0.9).count();
         x.elapsed_sec = self.start.elapsed().as_secs_f64();
         x
     }
@@ -103,9 +113,12 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
 /// 실제 실행: 파일마다 `kra-diag extract-one` 자식 프로세스(30초 제한). 200개마다 중간 결과를 알린다.
 pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>, on_progress: &mut dyn FnMut(&ExtractInfo)) -> ExtractInfo {
     let exe = std::env::current_exe().expect("current exe");
-    let extract = |f: &Path| {
+    let extract = |f: &Path, coverage: bool| {
         let mut cmd = Command::new(&exe);
         cmd.arg("extract-one").arg(f);
+        if coverage {
+            cmd.arg("--coverage");
+        }
         run_command(cmd, Duration::from_secs(30))
     };
     run_with(roots, tokenizer, &extract, 200, on_progress)
@@ -114,7 +127,7 @@ pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>, on_progress: &mut d
 pub fn run_with(
     roots: &[PathBuf],
     tokenizer: Option<&Tokenizer>,
-    extract: &dyn Fn(&Path) -> Outcome,
+    extract: &dyn Fn(&Path, bool) -> Outcome,
     every: usize,
     on_progress: &mut dyn FnMut(&ExtractInfo),
 ) -> ExtractInfo {
@@ -127,13 +140,19 @@ pub fn run_with(
         magics: HashMap::new(),
         ratios: Vec::new(),
         chunk_counts: Vec::new(),
+        coverages: Vec::new(),
         start: Instant::now(),
     };
+    let stride = files.len().div_ceil(COVERAGE_SAMPLES).max(1);
     for (i, f) in files.iter().enumerate() {
         eprint!("\r문서 확인 중 {}/{}", i + 1, files.len());
-        match extract(f) {
-            Outcome::Ok { doc, distribution } => {
+        let measure = i % stride == 0 && std::fs::metadata(f).is_ok_and(|m| m.len() <= COVERAGE_MAX_BYTES);
+        match extract(f, measure) {
+            Outcome::Ok { doc, distribution, coverage } => {
                 a.x.ok += 1;
+                if let Some(c) = coverage {
+                    a.coverages.push(c as f64);
+                }
                 a.x.distribution += distribution as usize;
                 if let Some(tk) = tokenizer {
                     let text: String = doc.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
@@ -180,9 +199,31 @@ mod tests {
             std::fs::write(dir.join(format!("{i}.hwp")), b"NOT-A-HWP").unwrap();
         }
         let mut seen = Vec::new();
-        let fake = |_: &std::path::Path| extract::runner::Outcome::Failed { kind: extract::hwp::FailKind::NotContainer, magic: "4e4f54".into() };
+        let fake = |_: &std::path::Path, _: bool| extract::runner::Outcome::Failed { kind: extract::hwp::FailKind::NotContainer, magic: "4e4f54".into() };
         let x = super::run_with(&[dir], None, &fake, 1, &mut |p| seen.push(p.processed));
         assert_eq!(x.processed, 3);
         assert_eq!(seen, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn coverage_is_requested_and_summarized() {
+        let dir = std::env::temp_dir().join("kra-diag-coverage");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (i, c) in ["1.0", "0.99", "0.5", "0.95"].iter().enumerate() {
+            std::fs::write(dir.join(format!("{i}.hwp")), c).unwrap();
+        }
+        let requested = std::cell::Cell::new(0);
+        let fake = |p: &std::path::Path, measure: bool| {
+            requested.set(requested.get() + measure as usize);
+            let c: f32 = std::fs::read_to_string(p).unwrap().parse().unwrap();
+            extract::runner::Outcome::Ok { doc: doc::Document { title: None, blocks: vec![] }, distribution: false, coverage: measure.then_some(c) }
+        };
+        let x = super::run_with(&[dir], None, &fake, 0, &mut |_| {});
+        assert_eq!(requested.get(), 4, "적은 문서는 모두 측정한다");
+        assert_eq!(x.coverage_samples, 4);
+        assert_eq!(x.coverage_below_90, 1);
+        assert!((x.coverage_median.unwrap() - 0.99).abs() < 1e-6, "{:?}", x.coverage_median);
+        assert!((x.coverage_p10.unwrap() - 0.5).abs() < 1e-6, "{:?}", x.coverage_p10);
     }
 }

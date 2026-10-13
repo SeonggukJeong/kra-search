@@ -51,7 +51,12 @@ enum Cmd {
     },
     /// (내부용) 파일 하나를 추출해 JSON 한 줄 출력
     #[command(hide = true)]
-    ExtractOne { file: PathBuf },
+    ExtractOne {
+        file: PathBuf,
+        /// 추출 커버리지도 잰다
+        #[arg(long)]
+        coverage: bool,
+    },
     /// (내부용) 모델 하나를 측정해 JSON 한 줄 출력
     #[command(hide = true)]
     BenchOne {
@@ -99,8 +104,8 @@ fn main() {
     let dir = exe_dir();
     let cmd = cli.cmd.unwrap_or(Cmd::All { root: vec![], models: None, skip_flat: false, flat_n: 500_000 });
     match &cmd {
-        Cmd::ExtractOne { file } => {
-            extract::cli::extract_one_main(file);
+        Cmd::ExtractOne { file, coverage } => {
+            extract::cli::extract_one_main(file, *coverage);
             return;
         }
         Cmd::BenchOne { model, threads } => {

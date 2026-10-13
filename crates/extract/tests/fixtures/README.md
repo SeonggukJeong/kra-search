@@ -14,3 +14,12 @@ rhwp 저장소(https://github.com/edwardkim/rhwp, MIT, rev 1a76570) `samples/`�
 - corrupt.hwp — form.hwp 앞 4KB만 자른 손상 파일
 - not_container.hwp — OLE/ZIP이 아닌 임의 헤더
 - drm_fasoo.hwp — Fasoo DRM 헤더 시그니처(`\x9b DRMONE`)만 흉내 낸 파일
+
+정책브리핑(korea.kr) 보도자료 첨부 — **공공누리 제1유형(출처표시)**, 평가 세트 `eval/public` 과 같은 파일.
+추출 누락 회귀 시험(`tests/coverage.rs`)용으로 고른 것으로, 예전 어댑터(rhwp `build_chunks`)에서 본문이 빠졌던 문서다.
+
+| 파일 | 평가 id | 출처 | 시험하는 것 |
+|---|---|---|---|
+| notice_clauses.hwpx | P0522 | 보건복지부 "노인을 위한 도시는 있다" 고령친화도시 지정제도 본격 추진 (korea.kr newsId=156783899) | 고시 조문(제N조·항·호)의 본문 없는 제목 줄 |
+| press_binary.hwp | P0989 | 산림청 양산산림항공관리소, 통도사 일원서 대대적 합동 캠페인 (korea.kr newsId=156783153) | 바이너리 HWP 본문·표 |
+| press_textbox.hwpx | P0169 | 관계부처 합동 10월 일자리전담반(TF) 개최 (korea.kr newsId=156784628) | 글상자 안 글자 |

@@ -10,13 +10,19 @@ use wait_timeout::ChildExt;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Outcome {
-    Ok { doc: Document, distribution: bool },
+    /// `coverage`: 추출 커버리지(0~1, `extract::coverage`) — 요청했을 때만.
+    Ok {
+        doc: Document,
+        distribution: bool,
+        #[serde(default)]
+        coverage: Option<f32>,
+    },
     Failed { kind: FailKind, magic: String },
     Timeout,
     Crashed { code: Option<i32> },
 }
 
-/// `exe file` 을 실행한다(`extract-one` 바이너리).
+/// `exe file` 을 실행한다(`extract-one` 바이너리, 커버리지 측정 없음).
 pub fn run_isolated(exe: &Path, file: &Path, timeout: Duration) -> Outcome {
     let mut cmd = Command::new(exe);
     cmd.arg(file);

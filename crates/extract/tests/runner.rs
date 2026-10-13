@@ -11,7 +11,7 @@ fn fx(name: &str) -> PathBuf {
 }
 fn ok_doc(name: &str) -> (doc::Document, bool) {
     match run_isolated(&exe(), &fx(name), Duration::from_secs(30)) {
-        Outcome::Ok { doc, distribution } => (doc, distribution),
+        Outcome::Ok { doc, distribution, .. } => (doc, distribution),
         other => panic!("{name}: {other:?}"),
     }
 }
