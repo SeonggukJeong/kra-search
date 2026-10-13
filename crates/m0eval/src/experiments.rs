@@ -15,7 +15,6 @@ use std::time::Instant;
 
 pub const DIMS: [usize; 3] = [768, 512, 256];
 const CARD_TOKENS: usize = 256;
-const KINDS: [&str; 5] = ["semantic", "keyword", "abbrev", "temporal", "deep"];
 
 pub struct ModelRun {
     pub name: String,
@@ -54,7 +53,7 @@ pub fn run_model(model_path: &Path, docs: &[EvalDoc], queries: &[Query], threads
             .filter_map(|d| build_card(&d.doc, CARD_TOKENS, &count).map(|c| (d.id.clone(), p.render_doc(d.doc.title.as_deref(), &c))))
             .collect()
     };
-    let cards = get_or_compute(&name, "card", || embed_all(&mut m, card_inputs, &mut tokens, &mut secs));
+    let cards = get_or_compute(&name, "card", card_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
 
     let mut chunks = HashMap::new();
     let mut chunks_per_doc = Vec::new();
@@ -71,10 +70,10 @@ pub fn run_model(model_path: &Path, docs: &[EvalDoc], queries: &[Query], threads
             }
             v
         };
-        chunks.insert(size, get_or_compute(&name, &format!("chunk{size}"), || embed_all(&mut m, inputs, &mut tokens, &mut secs)));
+        chunks.insert(size, get_or_compute(&name, &format!("chunk{size}"), inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs)));
     }
     let q_inputs: Vec<(String, String)> = queries.iter().map(|q| (q.qid.clone(), p.render_query(&q.text))).collect();
-    let qv = get_or_compute(&name, "query", || embed_all(&mut m, q_inputs, &mut tokens, &mut secs));
+    let qv = get_or_compute(&name, "query", q_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
 
     let token_ratio = docs
         .iter()
@@ -164,8 +163,15 @@ fn pct(sorted: &[f64], p: f64) -> f64 {
 
 pub fn quality_table(runs: &[ModelRun], queries: &[Query]) -> String {
     let mut s = String::new();
-    writeln!(s, "| 모델 | 차원 | 청크 | 점수 | nDCG@10 전체 | semantic | keyword | abbrev | temporal | deep | Recall@20 |").unwrap();
-    writeln!(s, "|---|---|---|---|---|---|---|---|---|---|---|").unwrap();
+    // 질의 유형 열은 질의 파일에 나온 순서대로(평가 세트를 더하면 열도 늘어난다).
+    let mut kinds: Vec<&str> = Vec::new();
+    for q in queries {
+        if !kinds.contains(&q.kind.as_str()) {
+            kinds.push(&q.kind);
+        }
+    }
+    writeln!(s, "| 모델 | 차원 | 청크 | 점수 | nDCG@10 전체 | {} | Recall@20 |", kinds.join(" | ")).unwrap();
+    writeln!(s, "|---|---|---|---|---|{}---|", "---|".repeat(kinds.len())).unwrap();
     let mut rows: Vec<(f64, String)> = Vec::new();
     for run in runs {
         let mut sizes: Vec<usize> = run.chunks.keys().copied().collect();
@@ -186,13 +192,16 @@ pub fn quality_table(runs: &[ModelRun], queries: &[Query]) -> String {
                         rec.push(recall_at_k(r, &q.relevant, 20));
                         by_kind.entry(q.kind.as_str()).or_default().push(n);
                     }
-                    let k = |name: &str| mean(by_kind.get(name).map(Vec::as_slice).unwrap_or(&[]));
+                    let per_kind: String = kinds
+                        .iter()
+                        .map(|name| format!(" {:.4} |", mean(by_kind.get(name).map(Vec::as_slice).unwrap_or(&[]))))
+                        .collect();
                     let size_label = if st == Strategy::Card { "-".to_string() } else { size.to_string() };
                     rows.push((
                         mean(&all),
                         format!(
-                            "| {} | {} | {} | {} | **{:.4}** | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} |",
-                            run.name, dim, size_label, st.label(), mean(&all), k(KINDS[0]), k(KINDS[1]), k(KINDS[2]), k(KINDS[3]), k(KINDS[4]), mean(&rec)
+                            "| {} | {} | {} | {} | **{:.4}** |{} {:.4} |",
+                            run.name, dim, size_label, st.label(), mean(&all), per_kind, mean(&rec)
                         ),
                     ));
                 }

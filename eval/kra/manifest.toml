@@ -1,0 +1,19 @@
+# 한국마사회 업무 문서 평가 세트. 원본은 저장소에 넣지 않는다(eval/kra/docs/ 는 gitignore).
+# 사용자가 정보공개포털(open.go.kr) 원문정보에서 받아 eval/downloads/ 에 둔 파일을
+# `python3 tools/eval/import_local.py eval/kra` 로 복사·검증한다. `local` = eval/downloads 기준 상대 경로.
+
+[[doc]]
+id = "K0001"
+title = "「내부통제 규정」일부 개정(안)"
+local = "한국마사회 내부통제규정 개정 시행/붙임1. 내부통제규정 일부 개정안.hwp"
+source = "open.go.kr 원문정보 · 한국마사회 윤리경영부-3659(2026.9.16.) 붙임1"
+sha256 = "89eb616d1af50b4bd4eb3bd3c1cea4c0860c53b4e06be009212898269221bb20"
+ext = "hwp"
+
+[[doc]]
+id = "K0002"
+title = "316.내부통제규정 개정전문"
+local = "한국마사회 내부통제규정 개정 시행/붙임2. 316.내부통제규정_개정전문.hwp"
+source = "open.go.kr 원문정보 · 한국마사회 윤리경영부-3659(2026.9.16.) 붙임2"
+sha256 = "3750a2a0a84f0d0b8bb7fd37b679627b24cd069d49c8e43b7538592de4c26e0f"
+ext = "hwp"

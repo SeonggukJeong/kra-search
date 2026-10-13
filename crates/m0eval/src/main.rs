@@ -13,8 +13,9 @@ use std::path::PathBuf;
 struct Args {
     #[arg(long, default_value = "models")]
     models: PathBuf,
-    #[arg(long, default_value = "eval/public")]
-    eval: PathBuf,
+    /// 평가 세트 폴더(여러 번 지정 가능: `--eval eval/public --eval eval/kra`). 문서와 질의를 합친다.
+    #[arg(long, default_values = ["eval/public"])]
+    eval: Vec<PathBuf>,
     #[arg(long, default_value = "docs/m0/eval-dev.md")]
     out: PathBuf,
     #[arg(long, default_value_t = 8)]
@@ -23,8 +24,13 @@ struct Args {
 
 fn main() {
     let a = Args::parse();
-    let (docs, failed) = corpus::load_docs(&a.eval);
-    let queries = corpus::load_queries(&a.eval);
+    let (mut docs, mut failed, mut queries) = (Vec::new(), Vec::new(), Vec::new());
+    for dir in &a.eval {
+        let (d, f) = corpus::load_docs(dir);
+        docs.extend(d);
+        failed.extend(f);
+        queries.extend(corpus::load_queries(dir));
+    }
     eprintln!("문서 {} (실패 {}), 질의 {}", docs.len(), failed.len(), queries.len());
     let mut models: Vec<PathBuf> = std::fs::read_dir(&a.models)
         .unwrap()
@@ -44,7 +50,8 @@ fn main() {
 
     let mut s = String::new();
     writeln!(s, "# M0 개발 PC 평가 결과 (자동 생성: `cargo run -p m0eval --release`)\n").unwrap();
-    writeln!(s, "- 말뭉치: `eval/public` 문서 {}건(추출 실패 {}건: {}), 질의 {}개", docs.len(), failed.len(),
+    let sets = a.eval.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(" + ");
+    writeln!(s, "- 말뭉치: {sets} 문서 {}건(추출 실패 {}건: {}), 질의 {}개", docs.len(), failed.len(),
         failed.iter().map(|f| format!("{} {}", f.0, f.1)).collect::<Vec<_>>().join(", "), queries.len()).unwrap();
     writeln!(s, "- 실행: {} · 스레드 {}\n", std::env::consts::ARCH, a.threads).unwrap();
     writeln!(s, "## 1. 검색 품질 (의미 검색 단독, nDCG@10 내림차순)\n").unwrap();
