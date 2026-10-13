@@ -60,7 +60,7 @@ fn main() {
         writeln!(s, "## 2. 이진 후보 선별 재현율 ({})\n\n{}", q8.name, experiments::binary_recall_table(q8)).unwrap();
         writeln!(s, "## 3. 토큰 통계 ({})\n\n{}", q8.name, experiments::token_table(q8)).unwrap();
     }
-    writeln!(s, "## 4. 처리 속도 (이 PC, 참고용)\n\n| 모델 | 초당 토큰 |\n|---|---|").unwrap();
+    writeln!(s, "## 4. 처리 속도 (이 PC, 참고용 — 본문 청크(400) 192개 표본, 예열 후 캐시 없이 매번 측정)\n\n| 모델 | 초당 토큰 |\n|---|---|").unwrap();
     for r in &runs {
         writeln!(s, "| {} | {:.0} |", r.name, r.tokens_per_sec).unwrap();
     }

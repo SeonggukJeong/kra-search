@@ -1,6 +1,6 @@
 //! M0 실험: 품질(양자화×차원×청크 크기×점수 방식), 이진 선별 재현율, 토큰 통계, 처리 속도.
 
-use crate::cache::{get_or_compute, Vectors};
+use crate::cache::{Store, Vectors};
 use crate::corpus::{EvalDoc, Query};
 use crate::metrics::{first_relevant_rank, ndcg_at_k, recall_at_k};
 use embed::chunk::{build_card, build_chunks, ChunkParams};
@@ -15,6 +15,8 @@ use std::time::Instant;
 
 pub const DIMS: [usize; 3] = [768, 512, 256];
 const CARD_TOKENS: usize = 256;
+/// 속도 측정 표본: 청크(400) 중 고르게 뽑은 개수.
+const SPEED_SAMPLE: usize = 192;
 
 pub struct ModelRun {
     pub name: String,
@@ -45,7 +47,10 @@ pub fn run_model(model_path: &Path, docs: &[EvalDoc], queries: &[Query], threads
     let name = model_path.file_name().unwrap().to_string_lossy().to_string();
     let p = ModelProfile::embeddinggemma2();
     let mut m = Embedder::load(model_path, &EngineOptions { threads, max_tokens: 1024, backend_dir: None }).expect("load model");
+    // 임베딩 시간은 캐시에 없으므로 속도는 아래 고정 표본으로 따로 잰다(KI-006).
     let (mut tokens, mut secs) = (0usize, 0f64);
+    let mut speed_sample: Vec<(String, String)> = Vec::new();
+    let mut store = Store::open(&Path::new("target/m0cache").join(&name));
 
     let card_inputs: Vec<(String, String)> = {
         let count = |s: &str| m.token_count(s).unwrap_or(s.chars().count());
@@ -53,7 +58,7 @@ pub fn run_model(model_path: &Path, docs: &[EvalDoc], queries: &[Query], threads
             .filter_map(|d| build_card(&d.doc, CARD_TOKENS, &count).map(|c| (d.id.clone(), p.render_doc(d.doc.title.as_deref(), &c))))
             .collect()
     };
-    let cards = get_or_compute(&name, "card", card_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
+    let cards = store.get_or_compute("card", card_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
 
     let mut chunks = HashMap::new();
     let mut chunks_per_doc = Vec::new();
@@ -68,12 +73,21 @@ pub fn run_model(model_path: &Path, docs: &[EvalDoc], queries: &[Query], threads
                 }
                 v.extend(cs.into_iter().map(|c| (d.id.clone(), p.render_doc(d.doc.title.as_deref(), &c))));
             }
+            if size == 400 {
+                let step = (v.len() / SPEED_SAMPLE).max(1);
+                speed_sample = v.iter().step_by(step).take(SPEED_SAMPLE).cloned().collect();
+            }
             v
         };
-        chunks.insert(size, get_or_compute(&name, &format!("chunk{size}"), inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs)));
+        chunks.insert(size, store.get_or_compute(&format!("chunk{size}"), inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs)));
     }
     let q_inputs: Vec<(String, String)> = queries.iter().map(|q| (q.qid.clone(), p.render_query(&q.text))).collect();
-    let qv = get_or_compute(&name, "query", q_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
+    let qv = store.get_or_compute("query", q_inputs, |i| embed_all(&mut m, i, &mut tokens, &mut secs));
+    // 첫 배치는 예열(스레드·메모리 준비)이라 빼고 잰다.
+    let (mut tokens, mut secs) = (0usize, 0f64);
+    embed_all(&mut m, speed_sample.iter().take(8).cloned().collect(), &mut tokens, &mut secs);
+    let (mut tokens, mut secs) = (0usize, 0f64);
+    embed_all(&mut m, speed_sample, &mut tokens, &mut secs);
 
     let token_ratio = docs
         .iter()

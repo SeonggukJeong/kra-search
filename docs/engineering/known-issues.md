@@ -10,7 +10,7 @@
 | KI-003 | llama.cpp 로그(모델 경로 포함)가 콘솔에 대량 출력 | `embed/src/engine.rs` | 화면 소음, 경로 노출(보고서에는 안 남음) | `llama_log_set` 으로 무음 또는 우리 로그로 전달 | M1 엔진 정리 | 미해결 |
 | KI-004 | 릴리즈가 VC++ 런타임을 러너 `System32` 에서 복사(VS 재배포 폴더 아님), GitHub Actions 를 태그로 고정(SHA 아님), ~~수동 점검표가 zip 에 없음~~ | `.github/workflows/release-m0.yml` | 재현성·공급망 | VS `Redist\MSVC` 경로 사용, 액션 SHA 고정 | 제품 설치 파일 작업(M7) | 점검표 동봉은 해결(m0-diag-5), 나머지 미해결 |
 | KI-005 | `fetch-models.sh` 가 `resolve/main` 에서 받고 SHA-256 검증 안 함 | `tools/fetch-models.sh` | 모델이 바뀌어도 모름 | 리비전 고정 + SHA-256 검증 | 모델 확정(M0 Task 13) | 미해결 |
-| KI-006 | ~~m0eval 캐시 키가 말뭉치·청크 설정 무시~~ / 캐시를 쓰면 초당 토큰이 0 | `m0eval` | 속도 표가 0 | 측정 시간도 캐시에 저장하거나 속도는 따로 측정 | 평가 실행기 손볼 때 | 캐시 키는 해결(INC-014), 속도 표시는 미해결 |
+| KI-006 | ~~m0eval 캐시 키가 말뭉치·청크 설정 무시~~ / ~~캐시를 쓰면 초당 토큰이 0~~ | `m0eval` | 속도 표가 0 | 측정 시간도 캐시에 저장하거나 속도는 따로 측정 | 평가 실행기 손볼 때 | 해결: 캐시 키(INC-014 → DEC-032 항목별), 속도는 청크(400) 192개 고정 표본을 예열 후 매번 측정 |
 | KI-007 | build.rs 가 서브모듈 작업 트리를 직접 수정(패치 적용), `rerun-if-changed` 가 `llama.h` 만 감시 | `crates/llama-sys/build.rs` | vendor 를 바꿔도 재빌드 안 될 수 있음 | OUT_DIR 로 복사 후 패치, 감시 범위 확대 | llama.cpp 업그레이드 | 미해결 |
 | KI-008 | `index` 크레이트가 벡터 계산만 쓰려고 `embed`→`llama-sys` 까지 빌드 | `crates/index` | 빌드 시간 | `vector.rs` 를 가벼운 크레이트로 분리 | M1 크레이트 구성 | 미해결 |
 | KI-009 | 시험용 멈춤 훅 `KRA_TEST_HANG` 이 릴리즈 바이너리에 남음 | `extract/src/cli.rs` | 환경 변수로 멈출 수 있음(위험 낮음) | `cfg(test)`/기능 플래그로 제한 | M1 | 미해결 |
