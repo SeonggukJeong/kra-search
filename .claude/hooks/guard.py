@@ -15,8 +15,8 @@ RULES = [
         "API(n_embd_out·encode) 확인, patches·model·reference·memory 시험, 문서의 '현재 버전' 갱신.",
     ),
     (
-        r"fetch-rhwp\.sh|third_party/rhwp",
-        "rhwp 를 다루는 명령이다. 버전을 바꾸는 중이면 docs/engineering/runbooks/upgrade-rhwp.md — "
+        r"fetch-rhwp\.sh.*\bREV\b|\bREV\b.*fetch-rhwp\.sh|rm\s+-rf\s+\S*third_party/rhwp",
+        "rhwp 버전을 바꾸는 명령이다. docs/engineering/runbooks/upgrade-rhwp.md — "
         "rag::build_chunks 로 되돌리지 말 것(INC-011), sparse 목록을 바꾸면 SPEC_VERSION 올리기, 커버리지 기준값 비교.",
     ),
     (
