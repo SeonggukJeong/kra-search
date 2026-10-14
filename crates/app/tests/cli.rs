@@ -87,6 +87,7 @@ fn index_and_search_all_formats() {
     assert!(r.contains("깨진문서.hwp") && r.contains("열 수 없는 파일"), "실패한 파일도 이름으로 찾힌다(UI D7 용어):\n{r}");
     let st = e.run(&["status"]);
     assert!(st.contains("파일 6") && st.contains("내용 5"), "{st}");
+    assert!(!st.contains("키워드 색인"), "화면 문구는 UI D7 용어(키워드 색인 → 검색):\n{st}");
 }
 
 #[test]
@@ -165,6 +166,9 @@ fn corrupt_meta_pages_are_rebuilt() {
         *b ^= 0x5A;
     }
     std::fs::write(&db, &bytes).unwrap();
+    // 검색은 고치지 않고 쉬운 말로 index 를 안내한다(내부 오류 이름 없이).
+    let r = e.run_fail(&["search", "렛츠런파크"]);
+    assert!(r.contains("kra-search index") && !r.contains("DB"), "{r}");
     let s = e.index();
     assert!(s.contains("다시 만듭니다"), "{s}");
     let r = e.run(&["search", "렛츠런파크"]);

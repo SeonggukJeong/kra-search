@@ -141,8 +141,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 r => r.map_err(|e| e.to_string())?,
             };
             let mut line = format!(
-                "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개(못 읽음 {}개) · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 접근 못 함 {}개",
-                s.scanned, s.changed, s.removed, s.extracted, s.failed, s.reused, s.retried, s.unreadable
+                "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 못 읽음 {}개(다시 시도 포함) · 접근 못 함 {}개",
+                s.scanned, s.changed, s.removed, s.extracted, s.reused, s.retried, s.failed, s.unreadable
             );
             if s.cloud_only > 0 {
                 line += &format!(" · 클라우드 전용이라 건너뜀 {}개", s.cloud_only);
@@ -171,10 +171,10 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Status => {
             let store = open_store_readonly(&home, &analyzers)?;
-            let c = store.meta.counts().map_err(|e| e.to_string())?;
-            let roots = store.meta.roots().map_err(|e| e.to_string())?;
+            let c = store.meta.counts().map_err(|e| IndexError::from(e).to_string())?;
+            let roots = store.meta.roots().map_err(|e| IndexError::from(e).to_string())?;
             println!("색인 폴더: {}", if roots.is_empty() { "(없음)".to_string() } else { roots.join(", ") });
-            println!("파일 {} · 내용 {} · 내용을 못 읽은 것 {} · 반영 대기 {} · 키워드 색인 문서 {}", c.files, c.contents, c.failed, c.pending, store.keyword.num_docs());
+            println!("파일 {} · 내용 {} · 내용을 못 읽은 것 {} · 반영 대기 {} · 검색에 반영된 문서 {}", c.files, c.contents, c.failed, c.pending, store.keyword.num_docs());
             println!("저장 위치: {}", home.root().display());
         }
         Cmd::Worker => unreachable!(),

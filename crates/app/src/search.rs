@@ -1,6 +1,6 @@
 //! 검색: 키워드 색인 → 내용 id → meta 의 제목·경로.
 
-use crate::store::Store;
+use crate::store::{user_error, Store};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -27,12 +27,12 @@ pub fn fail_label(fail: &str) -> &'static str {
 }
 
 pub fn search(store: &Store, query: &str, limit: usize) -> Result<Vec<Hit>, String> {
-    let hits = store.keyword.search(query, limit).map_err(|e| e.to_string())?;
+    let hits = store.keyword.search(query, limit).map_err(|e| format!("검색 색인 오류: {e}"))?;
     let mut out = Vec::new();
     for (id, score) in hits {
         let id = id as i64;
-        let Some(c) = store.meta.content(id).map_err(|e| e.to_string())? else { continue };
-        let paths: Vec<String> = store.meta.files_of(id).map_err(|e| e.to_string())?.into_iter().map(|f| f.path).collect();
+        let Some(c) = store.meta.content(id).map_err(user_error)? else { continue };
+        let paths: Vec<String> = store.meta.files_of(id).map_err(user_error)?.into_iter().map(|f| f.path).collect();
         if paths.is_empty() {
             continue; // 아직 반영 안 된 삭제
         }

@@ -9,7 +9,6 @@ name = "kra-search"
 path = "src/main.rs"
 
 [dependencies]
-doc = { path = "../doc" }
 extract = { path = "../extract" }
 index = { path = "../index" }
 crawler = { path = "../crawler" }

@@ -7,6 +7,7 @@ use extract::runner::Outcome;
 use extract::worker::Worker;
 use index::keyword::KeywordDoc;
 use index::meta::{ContentData, MetaError};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -22,6 +23,7 @@ pub struct IndexSummary {
     pub removed: usize,
     pub extracted: usize,
     pub reused: usize,
+    /// 내용을 못 읽은 수 — 새로 읽은 것(`extracted`)과 다시 시도한 것(`retried`)을 합친 것.
     pub failed: usize,
     pub unreadable: usize,
     pub retried: usize,
@@ -40,7 +42,7 @@ pub enum IndexError {
 impl std::fmt::Display for IndexError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IndexError::MetaCorrupt => write!(f, "메타 DB 손상"),
+            IndexError::MetaCorrupt => write!(f, "색인 데이터가 손상되었습니다. `kra-search index` 를 다시 실행하세요."),
             IndexError::Other(s) => write!(f, "{s}"),
         }
     }
@@ -50,14 +52,14 @@ impl From<MetaError> for IndexError {
     fn from(e: MetaError) -> Self {
         match e {
             MetaError::WrongKeyOrCorrupt => IndexError::MetaCorrupt,
-            e => IndexError::Other(e.to_string()),
+            e => IndexError::Other(crate::store::user_error(e)),
         }
     }
 }
 
-/// meta 가 아닌 오류(키워드 색인 등).
+/// meta 가 아닌 오류(키워드 색인 = 화면 용어로 "검색 색인", UI D7).
 fn err(e: impl std::fmt::Display) -> IndexError {
-    IndexError::Other(e.to_string())
+    IndexError::Other(format!("검색 색인 오류: {e}"))
 }
 
 fn content_data(o: Outcome) -> ContentData {
@@ -99,9 +101,6 @@ pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], time
         ..Default::default()
     };
 
-    for path in &diff.removed {
-        store.meta.remove_file(path)?;
-    }
     for (i, f) in diff.changed.iter().enumerate() {
         eprint!("\r문서 읽는 중 {}/{}", i + 1, diff.changed.len());
         let p = Path::new(&f.path);
@@ -140,9 +139,21 @@ pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], time
     if !diff.changed.is_empty() {
         eprintln!();
     }
+    // 지운 경로는 바뀐 파일을 다 처리한 뒤에 반영한다. 먼저 지우면 옮기거나 이름을 바꾼 파일의 내용이 고아가 되고,
+    // 중간 flush 가 고아를 지워 버려 FLUSH_EVERY 이후의 파일은 같은 내용을 다시 추출하게 된다(스펙 §6.4 "내용당 한 번").
+    for path in &diff.removed {
+        store.meta.remove_file(path)?;
+    }
+    // 이번 훑기에서 잰 크기·수정 시각(meta 에 기록하는 값과 같은 방법).
+    let scanned: HashMap<&str, (u64, i64)> = report.files.iter().map(|f| (f.path.as_str(), (f.size, f.mtime_ns))).collect();
     for (id, _) in retry {
         // 이번 실행에서 그 내용의 파일이 모두 바뀌거나 지워졌으면 건너뛴다. 경로는 지금 기준으로 다시 고른다.
         let Some(f) = store.meta.files_of(id)?.into_iter().next() else { continue };
+        // 바뀌었지만 해시를 못 한 파일은 옛 내용 id 를 가리킨 채 남는다 — 새 바이트를 옛 해시의 내용에 넣지 않도록,
+        // 기록된 크기·수정 시각이 이번 훑기와 같을 때만 다시 읽는다(다르면 다음 실행의 diff 가 처리한다).
+        if scanned.get(f.path.as_str()) != Some(&(f.size, f.mtime_ns)) {
+            continue;
+        }
         let p = Path::new(&f.path);
         let Some(before) = crawler::stat(p) else { continue };
         let d = extract(worker, p, before.0, timeout);
