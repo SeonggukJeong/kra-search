@@ -1,7 +1,7 @@
 //! 성능 측정: 모델별 처리량·검색어 지연·메모리, 평면 벡터 검색 속도.
 
 use crate::report::{BenchInfo, FlatBench, ModelBench};
-use embed::chunk::{build_chunks, ChunkParams};
+use embed::chunk::{build_chunks, BODY_CHUNK};
 use embed::engine::{EmbedError, Embedder, EngineOptions};
 use embed::profile::ModelProfile;
 use vector::flat::FlatIndex;
@@ -104,7 +104,7 @@ pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize, log
     let d = corpus_doc();
     let raw_chunks = {
         let count = |s: &str| m.token_count(s).unwrap_or_else(|_| s.chars().count());
-        build_chunks(&d, &ChunkParams { target_tokens: 400, max_tokens: 500, max_chunks: 2000 }, &count)
+        build_chunks(&d, &BODY_CHUNK, &count)
     };
     let inputs: Vec<String> = raw_chunks.iter().map(|c| p.render_doc(d.title.as_deref(), c)).collect();
     r.bench_tokens = inputs.iter().map(|s| m.token_count(s).unwrap_or(0)).sum();
@@ -125,8 +125,10 @@ pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize, log
     r.rss_mb_peak = rss_mb();
     drop(m);
 
-    // 하이브리드 CPU(성능+효율 코어)에서는 물리 코어 수가 최적이 아닐 수 있다(KI-017) — 여러 값을 잰다.
-    let mut threads: Vec<usize> = [1, 2, 4, 6, 8, 12, 16, physical, logical].into_iter().filter(|&t| t >= 1 && t <= logical.max(1)).collect();
+    // 하이브리드 CPU(성능+효율 코어)에서는 물리 코어 수가 최적이 아닐 수 있다(KI-017) — 여러 값과 성능 코어 수(그 2배)를 잰다.
+    let perf = crate::env::core_split().map(|(p, _)| p).unwrap_or(physical);
+    let mut threads: Vec<usize> =
+        [1, 2, 4, 6, 8, 12, 16, perf, perf * 2, physical, logical].into_iter().filter(|&t| t >= 1 && t <= logical.max(1)).collect();
     threads.sort();
     threads.dedup();
     for th in threads {

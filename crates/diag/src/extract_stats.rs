@@ -1,7 +1,7 @@
 //! 실제 업무 문서(HWP·PDF·Office·ODF·텍스트)의 형식별 추출 통계. 경로·파일명·본문은 결과에 남기지 않는다.
 
 use crate::report::ExtractInfo;
-use embed::chunk::{build_chunks, ChunkParams};
+use embed::chunk::{build_chunks, BODY_CHUNK};
 use embed::engine::Tokenizer;
 use extract::hwp::FailKind;
 use extract::runner::{run_command, Outcome};
@@ -9,7 +9,7 @@ use extract::format::Format;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const SKIP_DIRS: &[&str] = &["$recycle.bin", "system volume information", "appdata", "windows", "program files", "program files (x86)", ".git", "node_modules"];
 
@@ -64,8 +64,8 @@ fn is_cloud_placeholder(_: &std::fs::Metadata) -> bool {
     false
 }
 
-/// 대상 파일을 모은다. 돌려주는 값 = 건너뛴 클라우드 자리표시자 수.
-fn walk(root: &Path, out: &mut Vec<PathBuf>) -> usize {
+/// 대상 파일을 모은다(수정 시각도 함께). 돌려주는 값 = 건너뛴 클라우드 자리표시자 수.
+fn walk(root: &Path, out: &mut Vec<PathBuf>, mtimes: &mut Vec<SystemTime>) -> usize {
     let mut cloud = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -89,6 +89,9 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>) -> usize {
                 if is_cloud_placeholder(&md) {
                     cloud += 1;
                 } else {
+                    if let Ok(m) = md.modified() {
+                        mtimes.push(m);
+                    }
                     out.push(p);
                 }
             }
@@ -131,6 +134,51 @@ fn percentile(v: &mut [f64], p: f64) -> Option<f64> {
     Some(v[((v.len() - 1) as f64 * p).round() as usize])
 }
 
+/// 수정일 경과 기간 구간(이 일수 이하). 마지막 구간은 그보다 오래된 것.
+const AGE_BUCKETS: &[(u64, &str)] = &[(30, "30일 이내"), (365, "1년 이내"), (730, "1~2년"), (1095, "2~3년"), (1826, "3~5년")];
+
+/// 수정일 분포: (구간별 개수, 가장 많이 몰린 하루의 비율). 하루 앞(시계 차이)보다 미래면 "미래"로 센다.
+/// 날짜 값 자체는 돌려주지 않는다 — 비율만 남긴다.
+fn mtime_stats(mtimes: &[SystemTime], now: SystemTime) -> (Vec<(String, usize)>, Option<f64>) {
+    if mtimes.is_empty() {
+        return (vec![], None);
+    }
+    let mut counts = vec![0usize; AGE_BUCKETS.len() + 2];
+    let mut days: HashMap<u64, usize> = HashMap::new();
+    for m in mtimes {
+        if let Ok(d) = m.duration_since(SystemTime::UNIX_EPOCH) {
+            *days.entry(d.as_secs() / 86_400).or_default() += 1;
+        }
+        let i = match now.duration_since(*m) {
+            Ok(age) => {
+                let d = age.as_secs() / 86_400;
+                AGE_BUCKETS.iter().position(|(lim, _)| d <= *lim).unwrap_or(AGE_BUCKETS.len())
+            }
+            Err(e) if e.duration().as_secs() <= 86_400 => 0,
+            Err(_) => AGE_BUCKETS.len() + 1,
+        };
+        counts[i] += 1;
+    }
+    let labels = AGE_BUCKETS.iter().map(|(_, l)| *l).chain(["5년 넘음", "미래"]);
+    let buckets = labels.zip(counts).map(|(l, n)| (l.to_string(), n)).collect();
+    let top = days.values().copied().max().unwrap_or(0);
+    (buckets, Some(top as f64 / mtimes.len() as f64))
+}
+
+/// 찾은 전체 파일로 늘려 잡은 (청크 수, 청크 입력 토큰). 형식마다 추출한(표본) 문서의 합 × 찾은 수 / 추출한 수.
+/// 실패한 문서는 청크 0 으로 표본에 들어 있으므로 실패 비율도 그대로 반영된다. 통계를 낸 문서가 없으면 None.
+fn estimate_all(by_format: &[crate::report::FormatCount]) -> Option<(f64, f64)> {
+    let mut any = false;
+    let (mut chunks, mut tokens) = (0.0, 0.0);
+    for f in by_format.iter().filter(|f| f.total > 0) {
+        any |= f.stats_docs > 0;
+        let scale = f.found.max(f.total) as f64 / f.total as f64;
+        chunks += f.chunks as f64 * scale;
+        tokens += f.chunk_tokens as f64 * scale;
+    }
+    any.then_some((chunks, tokens))
+}
+
 struct Acc {
     x: ExtractInfo,
     magics: HashMap<String, usize>,
@@ -164,12 +212,19 @@ impl Acc {
         x.tokens_per_1k_chars_median = percentile(&mut self.ratios.clone(), 0.5);
         x.chunks_per_doc_p50 = percentile(&mut self.chunk_counts.clone(), 0.5);
         x.chunks_per_doc_p90 = percentile(&mut self.chunk_counts.clone(), 0.9);
+        if !self.chunk_counts.is_empty() {
+            x.chunks_per_doc_mean = Some(self.chunk_counts.iter().sum::<f64>() / self.chunk_counts.len() as f64);
+        }
         x.coverage_samples = self.coverages.len();
         x.coverage_median = percentile(&mut self.coverages.clone(), 0.5);
         x.coverage_p10 = percentile(&mut self.coverages.clone(), 0.1);
         x.coverage_below_90 = self.coverages.iter().filter(|c| **c < 0.9).count();
         x.pdfium_loaded = PDFIUM_LOADED.load(std::sync::atomic::Ordering::Relaxed);
         x.by_format = self.by_format.values().cloned().collect();
+        if let Some((c, tk)) = estimate_all(&x.by_format) {
+            x.est_chunks_all = Some(c);
+            x.est_chunk_tokens_all = Some(tk);
+        }
         if !self.card_tokens.is_empty() {
             x.card_tokens_mean = Some(self.card_tokens.iter().sum::<f64>() / self.card_tokens.len() as f64);
         }
@@ -205,6 +260,8 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
         pdf_bad_pages: x.pdf_bad_pages,
         article_numbered_docs: x.article_numbered_docs,
         article_numbered_paras: x.article_numbered_paras,
+        mtime_age: x.mtime_age.clone(),
+        mtime_top_day_share: x.mtime_top_day_share,
         ..Default::default()
     }
 }
@@ -226,29 +283,36 @@ pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>, on_progress: &mut d
         }
         run_command(cmd, Duration::from_secs(30))
     };
-    run_with(roots, tokenizer, &extract, 200, on_progress)
+    let count = tokenizer.map(|tk| move |s: &str| tk.count(s).ok());
+    run_with(roots, count.as_ref().map(|c| c as Counter), &extract, 200, on_progress)
 }
 
+/// 토큰 수 세기(실제: 모델 토크나이저, 시험: 글자 수).
+pub type Counter<'a> = &'a dyn Fn(&str) -> Option<usize>;
+
+/// `count` 가 없으면 토큰·청크·카드 통계를 내지 않는다.
 pub fn run_with(
     roots: &[PathBuf],
-    tokenizer: Option<&Tokenizer>,
+    count: Option<Counter>,
     extract: &dyn Fn(&Path, bool) -> Outcome,
     every: usize,
     on_progress: &mut dyn FnMut(&ExtractInfo),
 ) -> ExtractInfo {
     let mut all = Vec::new();
+    let mut mtimes = Vec::new();
     let mut cloud_only = 0;
     for r in roots {
-        cloud_only += walk(r, &mut all);
+        cloud_only += walk(r, &mut all, &mut mtimes);
     }
     let found_total = all.len();
+    let (mtime_age, mtime_top_day_share) = mtime_stats(&mtimes, SystemTime::now());
     let (files, found) = sample_per_format(all, PER_FORMAT_CAP);
     let by_format = found
         .iter()
         .map(|(ext, n)| (ext.to_string(), crate::report::FormatCount { ext: ext.to_string(), found: *n, ..Default::default() }))
         .collect();
     let mut a = Acc {
-        x: ExtractInfo { total: files.len(), found: found_total, cloud_only, ..Default::default() },
+        x: ExtractInfo { total: files.len(), found: found_total, cloud_only, mtime_age, mtime_top_day_share, ..Default::default() },
         magics: HashMap::new(),
         ratios: Vec::new(),
         chunk_counts: Vec::new(),
@@ -285,21 +349,27 @@ pub fn run_with(
                     a.coverages.push(c as f64);
                 }
                 a.x.distribution += distribution as usize;
-                if tokenizer.is_some() && !within_stats_cap(&doc) {
+                if count.is_some() && !within_stats_cap(&doc) {
                     a.x.stats_skipped_huge += 1;
-                } else if let Some(tk) = tokenizer {
+                    fc.stats_skipped_huge += 1;
+                } else if let Some(tk) = count {
                     let text: String = doc.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
                     let chars = text.chars().count();
                     if chars >= 200 {
-                        if let Ok(t) = tk.count(&text) {
+                        if let Some(t) = tk(&text) {
                             a.ratios.push(t as f64 * 1000.0 / chars as f64);
                         }
                     }
-                    let count = |s: &str| tk.count(s).unwrap_or_else(|_| s.chars().count());
-                    let n = build_chunks(&doc, &ChunkParams { target_tokens: 400, max_tokens: 500, max_chunks: 2000 }, &count).len();
-                    a.chunk_counts.push(n as f64);
+                    let count = |s: &str| tk(s).unwrap_or_else(|| s.chars().count());
+                    let profile = embed::profile::ModelProfile::embeddinggemma2();
+                    let chunks = build_chunks(&doc, &BODY_CHUNK, &count);
+                    a.chunk_counts.push(chunks.len() as f64);
+                    fc.stats_docs += 1;
+                    fc.chunks += chunks.len() as u64;
+                    // 실제 임베딩 입력(제목 접두어 포함)의 토큰 — 벤치의 초당 토큰과 같은 기준
+                    fc.chunk_tokens += chunks.iter().map(|c| count(&profile.render_doc(doc.title.as_deref(), c)) as u64).sum::<u64>();
                     if let Some(card) = embed::chunk::build_card(&doc, 256, &count) {
-                        let input = embed::profile::ModelProfile::embeddinggemma2().render_doc(doc.title.as_deref(), &card);
+                        let input = profile.render_doc(doc.title.as_deref(), &card);
                         a.card_tokens.push(count(&input) as f64);
                     }
                 }
@@ -454,6 +524,59 @@ mod tests {
     }
 
     #[test]
+    fn mtime_buckets_and_top_day_share() {
+        use std::time::{Duration, SystemTime};
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(20_000 * 86_400);
+        let day = |d: u64| now - Duration::from_secs(d * 86_400);
+        // 같은 날 3개(복사로 덮인 날짜처럼), 200일·800일·4000일 전 각 1개, 시계 차이(1시간 미래)·먼 미래 각 1개
+        let m = vec![day(10), day(10), day(10), day(200), day(800), day(4000), now + Duration::from_secs(3600), now + Duration::from_secs(90 * 86_400)];
+        let (b, top) = super::mtime_stats(&m, now);
+        let got: Vec<(&str, usize)> = b.iter().map(|(l, n)| (l.as_str(), *n)).collect();
+        assert_eq!(got, [("30일 이내", 4), ("1년 이내", 1), ("1~2년", 0), ("2~3년", 1), ("3~5년", 0), ("5년 넘음", 1), ("미래", 1)]);
+        assert!((top.unwrap() - 3.0 / 8.0).abs() < 1e-9, "{top:?}");
+        assert_eq!(super::mtime_stats(&[], now), (vec![], None));
+    }
+
+    #[test]
+    fn estimate_scales_each_format_by_found_over_processed() {
+        use crate::report::FormatCount;
+        let f = |ext: &str, found, total, stats_docs, chunks, chunk_tokens| FormatCount { ext: ext.into(), found, total, stats_docs, chunks, chunk_tokens, ..Default::default() };
+        // hwp: 표본 10개 중 청크 40 → 찾은 100개면 400. txt: 표본이 전부(5개) → 그대로 7.
+        let (c, tk) = super::estimate_all(&[f("hwp", 100, 10, 8, 40, 12_000), f("txt", 5, 5, 5, 7, 700)]).unwrap();
+        assert_eq!((c, tk), (407.0, 120_700.0));
+        assert_eq!(super::estimate_all(&[f("hwp", 3, 3, 0, 0, 0)]), None, "통계를 낸 문서가 없으면 추정하지 않는다");
+    }
+
+    /// 형식별 청크 수·청크 입력 토큰(제목 접두어 포함)을 쌓고, 실패 문서는 청크 0 으로 표본에 남는다.
+    #[test]
+    fn chunk_totals_accumulate_per_format() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in ["a", "b", "bad"] {
+            std::fs::write(dir.path().join(format!("{n}.hwp")), n).unwrap();
+        }
+        let para = |s: &str| doc::Block { kind: doc::BlockKind::Paragraph, text: s.into() };
+        let fake = |p: &std::path::Path, _: bool| match std::fs::read_to_string(p).unwrap().as_str() {
+            "bad" => extract::runner::Outcome::Failed { kind: extract::FailKind::Corrupt, magic: String::new() },
+            _ => extract::runner::Outcome::Ok {
+                doc: doc::Document { title: Some("제목".into()), blocks: vec![para(&"가".repeat(250)), para(&"나".repeat(250))] },
+                distribution: false,
+                coverage: None,
+                stats: Default::default(),
+            },
+        };
+        let chars = |s: &str| Some(s.chars().count());
+        let x = super::run_with(&[dir.path().to_path_buf()], Some(&chars), &fake, 0, &mut |_| {});
+        let f = &x.by_format[0];
+        // 문단 250자 둘 → 300 목표에서 청크 2개씩, 문서 2개 = 4
+        assert_eq!((f.total, f.stats_docs, f.chunks), (3, 2, 4));
+        let one = embed::profile::ModelProfile::embeddinggemma2().render_doc(Some("제목"), &"가".repeat(250)).chars().count() as u64;
+        assert_eq!(f.chunk_tokens, one * 4);
+        assert_eq!(x.chunks_per_doc_mean, Some(2.0));
+        assert_eq!(x.est_chunks_all, Some(4.0));
+        assert_eq!(x.mtime_age.iter().map(|b| b.1).sum::<usize>(), 3, "찾은 파일 모두의 수정일");
+    }
+
+    #[test]
     fn huge_document_is_over_stats_cap() {
         let mk = |n: usize| doc::Document { title: None, blocks: vec![doc::Block { kind: doc::BlockKind::Paragraph, text: "가".repeat(n) }] };
         assert!(super::within_stats_cap(&mk(super::STATS_MAX_CHARS - 10)));
@@ -478,7 +601,8 @@ mod tests {
             stats: Default::default(),
         };
         let t = std::time::Instant::now();
-        let x = super::run_with(&[dir.path().to_path_buf()], Some(&tk), &fake, 0, &mut |_| {});
+        let count = |s: &str| tk.count(s).ok();
+        let x = super::run_with(&[dir.path().to_path_buf()], Some(&count), &fake, 0, &mut |_| {});
         assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
         assert_eq!((x.ok, x.stats_skipped_huge), (1, 1));
     }

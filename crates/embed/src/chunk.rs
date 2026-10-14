@@ -9,6 +9,10 @@ pub struct ChunkParams {
     pub max_chunks: usize,
 }
 
+/// 본문 청크 설정 — M0 평가로 정한 크기 300(docs/m0/results.md "본문 청크 크기", 평가와 같이 최대 +100).
+/// 진단(kra-diag)과 앱(M2)이 같은 값을 쓴다 — 크기를 바꾸면 진단 수치도 함께 바뀐다(DEC-045).
+pub const BODY_CHUNK: ChunkParams = ChunkParams { target_tokens: 300, max_tokens: 400, max_chunks: 2000 };
+
 /// `text`를 토큰 한도 이하가 되도록 글자 경계에서 자른다(이진 탐색).
 fn cut_to(text: &str, max_tokens: usize, count: &dyn Fn(&str) -> usize) -> String {
     if count(text) <= max_tokens {

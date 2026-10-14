@@ -7,6 +7,7 @@
 2. 태그: `git tag m1-diag-N && git push origin m1-diag-N`(M0 은 `m0-diag-N`, 둘 다 트리거) → `.github/workflows/release-diag.yml` 이 Windows 에서 빌드·패키지·스모크 시험·프리릴리즈 생성.
    - zip 구성: `kra-diag.exe`, llama/ggml DLL(CPU 변형 전부), VC++ 런타임 3개(INC-005), `models/*.gguf`(Q4·Q8), `pdfium.dll`, `licenses/pdfium/`, `README-diag.txt`(원본 `docs/diag/README-diag.txt`). 수동 점검표는 동봉하지 않는다.
 3. **스모크 수치 확인**(사용자에게 넘기기 전 필수): 워크플로 로그의 `bench` 요약에서 Q4 초당 토큰이 2코어 러너 기준 약 380~580 범위인지. 수십 토큰이면 최적화 빠짐(INC-006) — 넘기지 말 것.
+   - m1-diag-2 부터 벤치 입력이 300토큰 청크다(DEC-045, 이전 400). 범위는 이전 릴리즈 값과 비교해 크게 벗어나지 않는지 본다 — 수십 토큰대가 아니면 청크 크기 차이로 본다.
    - 워크플로의 마지막 스모크(`extract-stats --root crates/extract/tests/fixtures` 후 요약에 `pdf 3/`)가 통과해야 한다 — 실행 파일 옆 `pdfium.dll` 이 자식 추출 프로세스까지 전달돼 불러와진다는 증거다. 시험 자료 PDF 중 글자 있는 파일 수가 바뀌면 이 숫자도 바꾼다.
 4. **개인정보 확인**: 보고서에 문서 내용·경로·파일명·사용자명·컴퓨터명이 없어야 한다 — `cargo test -p diag --release`(report 시험)가 지킨다. 보고서 항목을 추가했다면 그 시험에 경우를 추가한다.
 5. 사용자에게 전달: 릴리즈 링크, zip 의 SHA-256, 실행 방법(zip 풀고 `kra-diag.exe` 더블클릭 → `kra-diag-summary.txt`, `kra-diag-report.json` 반출), (수동 점검표는 zip 에 없다).
@@ -20,4 +21,5 @@
 | m0-diag-3 | **사용 금지** | 긴 표 머리글 청크 무한 반복(INC-009) |
 | m0-diag-4 | 대체됨(릴리즈 노트 표시) | 정상이지만 HWP 본문 누락 어댑터(INC-011) — 추출 통계·토큰 비율이 낮게 나옴 |
 | m0-diag-5 | 현재 | 본문 순회 어댑터 + 추출 커버리지 보고 + 점검표 동봉. 스모크: Q4 377 · Q8 245 토큰/초(2스레드), 메모리 최대 355MB. SHA-256 `45e24bab…3114456` |
-| m1-diag-1 | (게시 후 채움) | 형식별 추출·PDF·스레드 수별 속도·카드 길이·"제N조" 자동 번호 |
+| m1-diag-1 | 대체됨(릴리즈 노트 표시) | 형식별 추출·PDF·스레드 수별 속도·카드 길이·"제N조" 자동 번호. 청크 통계가 M0 결정(300)이 아닌 400 기준이고 M2 계획용 추정치가 없어 m1-diag-2 로 대체(DEC-045) |
+| m1-diag-2 | (게시 후 채움) | m1-diag-1 + 본문 청크 300 기준, 본문 전체 임베딩 시간 추정, 성능·효율 코어, 파일 수정일 분포 |

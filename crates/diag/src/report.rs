@@ -28,6 +28,9 @@ pub struct EnvInfo {
     pub webview2: Option<String>,
     pub hotkeys: Vec<HotkeyCheck>,
     pub antivirus: Vec<String>,
+    /// 성능 코어·효율 코어 수(Windows, 하이브리드 CPU 가 아니면 효율 0). 스레드 정책(M2, KI-017)용
+    pub perf_cores: Option<usize>,
+    pub efficiency_cores: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -85,6 +88,16 @@ pub struct FormatCount {
     /// 추출 프로세스 비정상 종료(예전 보고서는 timeout 에 섞여 있었다)
     #[serde(default)]
     pub crashed: usize,
+    /// 본문 청크 통계를 낸 문서 수(성공 중 너무 긴 문서 제외), 그 청크 수·청크 입력 토큰 합(`BODY_CHUNK`)
+    #[serde(default)]
+    pub stats_docs: usize,
+    #[serde(default)]
+    pub chunks: u64,
+    #[serde(default)]
+    pub chunk_tokens: u64,
+    /// 너무 길어(STATS_MAX_CHARS 초과) 청크 통계에서 빠진 문서 수
+    #[serde(default)]
+    pub stats_skipped_huge: usize,
 }
 
 #[derive(Serialize, serde::Deserialize, Default)]
@@ -154,13 +167,28 @@ pub struct ExtractInfo {
     pub card_tokens_p50: Option<f64>,
     #[serde(default)]
     pub card_tokens_p90: Option<f64>,
+    /// 문서당 본문 청크 수 평균(`BODY_CHUNK`)
+    #[serde(default)]
+    pub chunks_per_doc_mean: Option<f64>,
+    /// 찾은 전체 파일(표본 아님)로 늘려 잡은 본문 청크 수·청크 입력 토큰 합 — 형식마다 (찾은 수 / 추출한 수) 배.
+    /// 너무 긴 문서(`stats_skipped_huge`)는 빠져 있어 실제보다 작다.
+    #[serde(default)]
+    pub est_chunks_all: Option<f64>,
+    #[serde(default)]
+    pub est_chunk_tokens_all: Option<f64>,
+    /// 찾은 전체 파일의 수정일 경과 기간 분포(구간 이름, 개수) — 날짜 가산(M2, 문서 날짜 = 수정일)이 쓸모 있는지 본다
+    #[serde(default)]
+    pub mtime_age: Vec<(String, usize)>,
+    /// 수정일이 가장 많이 몰린 하루의 비율(복사·내려받기로 날짜가 덮였는지). 날짜 자체는 남기지 않는다
+    #[serde(default)]
+    pub mtime_top_day_share: Option<f64>,
 }
 
 impl Report {
     pub fn new() -> Self {
         let now = time::OffsetDateTime::now_utc();
         Self {
-            schema: 2,
+            schema: 3,
             tool_version: env!("CARGO_PKG_VERSION").into(),
             generated_utc: now.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
             ..Default::default()
@@ -188,10 +216,15 @@ fn thousands(n: f64) -> String {
 pub fn summarize(r: &Report) -> Vec<String> {
     let mut s = vec![format!("[kra-diag {}] {}", r.tool_version, r.generated_utc)];
     if let Some(e) = &r.env {
+        let split = match (e.perf_cores, e.efficiency_cores) {
+            (Some(p), Some(f)) if f > 0 => format!("(성능 {p} · 효율 {f})"),
+            _ => String::new(),
+        };
         s.push(format!(
-            "CPU: {} · {}코어/{}스레드 · {} · RAM {}MB · {} {}",
+            "CPU: {} · {}코어{}/{}스레드 · {} · RAM {}MB · {} {}",
             e.cpu_brand,
             e.physical_cores,
+            split,
             e.logical_cores,
             e.cpu_features.join(","),
             thousands(e.ram_total_mb as f64),
@@ -291,8 +324,46 @@ pub fn summarize(r: &Report) -> Vec<String> {
             s.push(format!("PDF 쪽: 전체 {} · 비었거나 깨져 버린 쪽 {}", thousands(x.pdf_pages as f64), thousands(x.pdf_bad_pages as f64)));
         }
         s.push(format!("\"제N조\" 자동 번호: 문서 {}개 · 문단 {}개", x.article_numbered_docs, x.article_numbered_paras));
+        // 모델별 최고 초당 토큰(벤치) — 실측 길이로 걸리는 시간을 환산한다.
+        let speeds: Vec<(&str, f64)> = r
+            .bench
+            .iter()
+            .flat_map(|b| &b.models)
+            .filter(|m| m.error.is_none())
+            .filter_map(|m| {
+                let best = m.tokens_per_sec.iter().map(|x| x.1).fold(0.0, f64::max);
+                (best > 0.0).then_some((m.model_file.as_str(), best))
+            })
+            .collect();
+        let per_model = |tokens: f64, unit: &str, div: f64| -> String {
+            if speeds.is_empty() {
+                return String::new();
+            }
+            let v: Vec<String> = speeds.iter().map(|(m, tps)| format!("{m} 약 {:.1}{unit}", tokens / tps / div)).collect();
+            format!(" → {}", v.join(" · "))
+        };
         if let (Some(m), Some(p50), Some(p90)) = (x.card_tokens_mean, x.card_tokens_p50, x.card_tokens_p90) {
-            s.push(format!("문서 카드 길이(토큰): 평균 {m:.0} · 중앙값 {p50:.0} · 90% {p90:.0}"));
+            s.push(format!("문서 카드 길이(토큰): 평균 {m:.0} · 중앙값 {p50:.0} · 90% {p90:.0}{}", per_model(10_000.0 * m, "분/1만 개", 60.0)));
+        }
+        if let (Some(mean), Some(c), Some(tk)) = (x.chunks_per_doc_mean, x.est_chunks_all, x.est_chunk_tokens_all) {
+            s.push(format!(
+                "본문 청크({}토큰): 문서당 평균 {mean:.1} · 찾은 파일 전체로 늘려 잡으면 청크 약 {} · 토큰 약 {}{}{}",
+                embed::chunk::BODY_CHUNK.target_tokens,
+                thousands(c),
+                thousands(tk),
+                if x.stats_skipped_huge > 0 { format!("(너무 긴 문서 {}개 빠짐)", x.stats_skipped_huge) } else { String::new() },
+                per_model(tk, "시간", 3600.0)
+            ));
+        }
+        if !x.mtime_age.is_empty() {
+            let n: usize = x.mtime_age.iter().map(|b| b.1).sum();
+            let parts: Vec<String> = x.mtime_age.iter().map(|(l, c)| format!("{l} {}", pct(*c, n))).collect();
+            s.push(format!(
+                "파일 수정일(찾은 파일 {}개): {} · 가장 많이 몰린 하루 {}",
+                thousands(n as f64),
+                parts.join(" · "),
+                x.mtime_top_day_share.map(|v| format!("{:.1}%", v * 100.0)).unwrap_or("-".into())
+            ));
         }
     }
     s
@@ -361,6 +432,39 @@ mod tests {
         let x = ExtractInfo { total: 4, processed: 4, found: 4, by_format: vec![f], ..Default::default() };
         let s = summarize(&Report { extract: Some(x), ..Default::default() }).join("\n");
         assert!(s.contains("pdf 1/4(시간초과 1)(비정상종료 2)"), "{s}");
+    }
+
+    /// 실측 카드 길이·본문 청크 추정·수정일 분포를 모델 속도로 환산해 보인다(M2 계획용).
+    #[test]
+    fn summary_shows_m2_estimates() {
+        let model = ModelBench { model_file: "q8.gguf".into(), tokens_per_sec: vec![(8, 360.0)], ..Default::default() };
+        let x = ExtractInfo {
+            card_tokens_mean: Some(72.0),
+            card_tokens_p50: Some(60.0),
+            card_tokens_p90: Some(90.0),
+            chunks_per_doc_mean: Some(4.5),
+            est_chunks_all: Some(45_000.0),
+            est_chunk_tokens_all: Some(12_960_000.0),
+            stats_skipped_huge: 2,
+            mtime_age: vec![("30일 이내".into(), 1), ("1년 이내".into(), 3)],
+            mtime_top_day_share: Some(0.25),
+            ..Default::default()
+        };
+        let r = Report { bench: Some(BenchInfo { models: vec![model], ..Default::default() }), extract: Some(x), ..Default::default() };
+        let s = summarize(&r).join("\n");
+        // 1만 × 72 / 360 / 60 = 33.3분, 12,960,000 / 360 / 3600 = 10.0시간
+        assert!(s.contains("평균 72 · 중앙값 60 · 90% 90 → q8.gguf 약 33.3분/1만 개"), "{s}");
+        assert!(s.contains("본문 청크(300토큰): 문서당 평균 4.5 · 찾은 파일 전체로 늘려 잡으면 청크 약 45,000 · 토큰 약 12,960,000(너무 긴 문서 2개 빠짐) → q8.gguf 약 10.0시간"), "{s}");
+        assert!(s.contains("파일 수정일(찾은 파일 4개): 30일 이내 25.0% · 1년 이내 75.0% · 가장 많이 몰린 하루 25.0%"), "{s}");
+    }
+
+    #[test]
+    fn cpu_line_shows_hybrid_split_only_when_hybrid() {
+        let e = |p, f| EnvInfo { physical_cores: 16, logical_cores: 24, perf_cores: Some(p), efficiency_cores: Some(f), ..Default::default() };
+        let s = summarize(&Report { env: Some(e(8, 8)), ..Default::default() }).join("\n");
+        assert!(s.contains("16코어(성능 8 · 효율 8)/24스레드"), "{s}");
+        let s = summarize(&Report { env: Some(e(16, 0)), ..Default::default() }).join("\n");
+        assert!(s.contains("16코어/24스레드"), "{s}");
     }
 
     /// 옛 보고서(새 항목 없음)도 읽힌다.
