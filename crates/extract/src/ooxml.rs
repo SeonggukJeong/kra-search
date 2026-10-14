@@ -90,10 +90,8 @@ fn heading_styles(xml: &str) -> HashSet<String> {
                             set.insert(id.clone());
                         }
                     }
-                    "outlineLvl" => {
-                        if attr(&e, "val").and_then(|v| v.parse::<u8>().ok()).is_some_and(|v| v < 9) {
-                            set.insert(id.clone());
-                        }
+                    "outlineLvl" if attr(&e, "val").and_then(|v| v.parse::<u8>().ok()).is_some_and(|v| v < 9) => {
+                        set.insert(id.clone());
                     }
                     _ => {}
                 }
