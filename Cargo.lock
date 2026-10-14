@@ -712,11 +712,13 @@ name = "extract"
 version = "0.0.1"
 dependencies = [
  "doc",
+ "quick-xml",
  "rhwp",
  "serde",
  "serde_json",
  "tempfile",
  "wait-timeout",
+ "zip",
 ]
 
 [[package]]

@@ -1,0 +1,2 @@
+# 시험 자료는 바이트 그대로(줄 끝 변환 금지) — 인코딩 감지·CSV 시험이 바이트에 묶여 있다
+crates/extract/tests/fixtures/** -text

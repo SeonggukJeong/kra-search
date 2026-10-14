@@ -89,3 +89,92 @@ fn hwpml_saved_as_hwp_is_extracted() {
         other => panic!("{other:?}"),
     }
 }
+
+fn office(name: &str) -> PathBuf {
+    fx(&format!("office/{name}"))
+}
+
+/// 성공 결과의 (제목, [(블록 종류, 글자)]).
+fn blocks(o: Outcome) -> (Option<String>, Vec<(doc::BlockKind, String)>) {
+    match o {
+        Outcome::Ok { doc, .. } => (doc.title, doc.blocks.into_iter().map(|b| (b.kind, b.text)).collect()),
+        other => panic!("추출 실패: {other:?}"),
+    }
+}
+
+fn kt(k: doc::BlockKind, t: &str) -> (doc::BlockKind, String) {
+    (k, t.to_string())
+}
+
+#[test]
+fn docx_headings_tables_textbox_once() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.docx")));
+    assert_eq!(title.as_deref(), Some("2026 운영 계획 & 예산"));
+    assert_eq!(b, vec![
+        kt(Heading, "사업 개요"),
+        kt(Paragraph, "본 문서는 렛츠런파크 운영 계획이다."),
+        kt(Paragraph, "항목 A&B <중요> 가나다\n둘째 줄"),
+        kt(Heading, "세부 추진 계획"),
+        kt(Heading, "개요 수준만 지정된 제목"),
+        kt(Paragraph, "남은 글 옮긴 글"),
+        kt(TableHeader, "구분 | 예산(백만원) | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 예산(백만원): 1,200 | 비고: 전년 대비 5% 증가"),
+        kt(TableRow, "구분: 시설 개선 | 예산(백만원): 300"),
+        kt(Paragraph, "글상자 안 문장"),
+        kt(Paragraph, "글상자 앞"),
+        kt(Paragraph, "맺음말"),
+    ]);
+}
+
+#[test]
+fn pptx_follows_presentation_order() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.pptx")));
+    assert_eq!(title.as_deref(), Some("더비 발표"));
+    assert_eq!(b, vec![
+        kt(Heading, "더비 운영 계획"),
+        kt(Paragraph, "2026년 3월"),
+        kt(Heading, "추진 일정"),
+        kt(Paragraph, "1단계: 준비\n2단계: 시행"),
+        kt(Paragraph, "세부 항목 & 비고"),
+        kt(TableHeader, "지역 | 입장객"),
+        kt(TableRow, "지역: 서울 | 입장객: 12,000"),
+        kt(Heading, "마지막 슬라이드"),
+        kt(Paragraph, "감사합니다"),
+    ]);
+}
+
+#[test]
+fn pptx_default_title_falls_back_to_first_slide_title() {
+    // 한국어 PowerPoint 기본 제목 "PowerPoint 프레젠테이션" 은 제목 필드(가중치 3.0)에 넣지 않는다.
+    let (title, _) = blocks(extract_one(&office("placeholder_title.pptx")));
+    assert_eq!(title.as_deref(), Some("2026 고객 만족 개선 방안"));
+}
+
+#[test]
+fn docx_without_core_uses_first_heading_as_title() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("no_core.docx")));
+    assert_eq!(title.as_deref(), Some("인사 규정 개정 검토"));
+    assert_eq!(b, vec![
+        kt(Paragraph, "보고서 본문 앞 문단"),
+        kt(Heading, "인사 규정 개정 검토"),
+        kt(Paragraph, "검토 결과를 보고한다."),
+    ]);
+}
+
+#[test]
+fn not_a_zip_with_office_extension_is_not_container() {
+    let (_d, p) = temp_file("가짜.docx", "그냥 글자".as_bytes());
+    assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::NotContainer));
+}
+
+#[test]
+fn password_protected_office_is_encrypted() {
+    // 암호를 건 DOCX/XLSX/PPTX 는 ZIP 이 아니라 OLE(복합 파일) 안에 EncryptedPackage 로 들어 있다.
+    let mut ole = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    ole.extend_from_slice(&[0u8; 504]);
+    let (_d, p) = temp_file("암호.xlsx", &ole);
+    assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::Encrypted));
+}

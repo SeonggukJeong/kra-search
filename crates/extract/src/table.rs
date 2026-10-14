@@ -6,7 +6,6 @@ use doc::{Block, BlockKind};
 
 /// 머리글 행 = 채워진 칸이 min(2, 최대 채움 수) 이상인 첫 행. 그 앞 행(표 위 제목 줄 등)은 문단으로 낸다.
 /// 머리글 칸이 비면 값만 쓰고, 값이 빈 칸은 생략하며, 값이 모두 빈 행은 버린다.
-#[allow(dead_code)] // 형식별 추출기(Task 3 이후)가 쓴다
 pub(crate) fn push_table(out: &mut Vec<Block>, rows: &[Vec<String>]) {
     let rows: Vec<Vec<String>> = rows
         .iter()

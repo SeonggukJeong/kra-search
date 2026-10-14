@@ -8,7 +8,9 @@ pub mod magic;
 pub(crate) mod norm;
 pub mod runner;
 pub(crate) mod table;
+mod ooxml;
 mod walk;
+pub(crate) mod xmlutil;
 
 use format::Format;
 
@@ -74,8 +76,25 @@ pub fn extract_bytes(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKin
     if magic::is_known_drm(bytes) {
         return Err((FailKind::Drm, magic::magic_hex(bytes)));
     }
+    use magic::{sniff, Container};
+    let zip_based = matches!(format, Format::Docx | Format::Pptx | Format::Xlsx | Format::Odt | Format::Odp | Format::Ods);
+    if zip_based {
+        match sniff(bytes) {
+            Container::Zip => {}
+            // 암호를 건 OOXML 은 OLE 복합 파일 안의 EncryptedPackage 로 저장된다.
+            Container::Ole if matches!(format, Format::Docx | Format::Pptx | Format::Xlsx) => {
+                return Err((FailKind::Encrypted, magic::magic_hex(bytes)))
+            }
+            _ => return Err((FailKind::NotContainer, magic::magic_hex(bytes))),
+        }
+    }
+    let plain = |r: Result<doc::Document, FailKind>| {
+        r.map(|doc| Extracted { doc, distribution: false, stats: Stats::default() }).map_err(|k| (k, magic::magic_hex(bytes)))
+    };
     match format {
         Format::Hwp | Format::Hwpx => hwp::extract_hwp(bytes),
+        Format::Docx => plain(ooxml::docx(bytes)),
+        Format::Pptx => plain(ooxml::pptx(bytes)),
         // 나머지 형식은 이후 Task 에서 채운다.
         _ => Err((FailKind::Unsupported, String::new())),
     }
