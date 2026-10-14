@@ -18,6 +18,8 @@ const MAX_CELLS_PER_SHEET: usize = 1_000_000;
 const MAX_SLOTS_PER_SHEET: usize = 2_000_000;
 /// ODS: calamine 이 펼칠 칸 수 어림의 상한(문서 전체). 넘으면 TooLarge(파일명만 색인).
 const ODS_MAX_CELLS: u64 = 2_000_000;
+/// 셀 글자 바이트 합 상한(문서 전체). 같은 긴 글자가 여러 칸에 복제돼도(공유 문자열·ODS 반복) 메모리가 곱해지지 않게(DEC-036).
+const MAX_SHEET_TEXT_BYTES: u64 = 64 * 1024 * 1024;
 /// XML 파트 전체 크기 합 상한(압축 해제 후).
 const MAX_XML_TOTAL: u64 = 256 * 1024 * 1024;
 /// ODF·XLSX 한계(calamine 과 같은 값).
@@ -103,6 +105,7 @@ fn to_rows(mut cells: Vec<(u32, u32, String)>) -> Vec<Vec<String>> {
 /// XLSX: 셀을 하나씩 읽는다(빈 격자를 만들지 않음).
 fn xlsx_sheets(bytes: &[u8], out: &mut Vec<Block>) -> Result<(), FailKind> {
     let mut wb: Xlsx<_> = open_workbook_from_rs(Cursor::new(bytes)).map_err(|_| FailKind::Corrupt)?;
+    let mut text_bytes = 0u64;
     for name in wb.sheet_names() {
         let mut reader = match wb.worksheet_cells_reader(&name) {
             Ok(r) => r,
@@ -124,6 +127,10 @@ fn xlsx_sheets(bytes: &[u8], out: &mut Vec<Block>) -> Result<(), FailKind> {
                     break;
                 }
             }
+            text_bytes += v.len() as u64;
+            if text_bytes > MAX_SHEET_TEXT_BYTES {
+                return Err(FailKind::TooLarge);
+            }
             cells.push((r, col, v));
             if cells.len() >= MAX_CELLS_PER_SHEET {
                 break;
@@ -142,11 +149,28 @@ fn xlsx_sheets(bytes: &[u8], out: &mut Vec<Block>) -> Result<(), FailKind> {
 /// - 시트마다: (첫 비지 않은 행 ~ 마지막 비지 않은 행, 반복 포함) × (가장 왼쪽 ~ 가장 오른쪽 비지 않은 열)
 /// - 행마다 펼치기 전 칸: 마지막 비지 않은 칸 위치 + 1 (앞쪽 빈 칸도 채워 넣음)
 ///
-/// 비지 않은 칸 = 값 형식(office:value-type)·수식 속성이 있거나 안에 내용이 있는(시작 태그) 칸. 넉넉하게(많게) 센다.
+/// 비지 않은 칸 = 병합·반복·스타일 말고 다른 속성(value-type·value·string-value·formula 등)이 있거나 안에 내용이 있는(시작 태그) 칸.
+/// calamine 은 value-type 없이 office:value 만 있어도 값으로 읽으므로 넉넉하게(많게) 센다.
+/// 글자 바이트도 어림한다: Σ (칸 내용 바이트 × 열 반복 × 행 반복) 이 MAX_SHEET_TEXT_BYTES 를 넘으면 TooLarge.
 fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
     /// 반복 속성(없으면 1, 0·잘못된 값도 1).
     fn num(e: &quick_xml::events::BytesStart, a: &str) -> u64 {
         attr(e, a).and_then(|v| v.parse::<u64>().ok()).unwrap_or(1).max(1)
+    }
+    /// 칸 시작 태그: (비지 않은 칸인가, 값 속성 바이트).
+    fn cell_attrs(e: &quick_xml::events::BytesStart) -> (bool, u64) {
+        let (mut filled, mut bytes) = (false, 0u64);
+        for a in e.attributes().with_checks(false).flatten() {
+            match a.key.local_name().as_ref() {
+                "number-columns-repeated" | "number-columns-spanned" | "number-rows-spanned" | "style-name" => {}
+                "value" | "string-value" | "date-value" | "time-value" | "boolean-value" => {
+                    filled = true;
+                    bytes += a.value.len() as u64;
+                }
+                _ => filled = true,
+            }
+        }
+        (filled, bytes)
     }
     let mut zip = open_zip(bytes)?;
     let f = match zip.by_name("content.xml") {
@@ -155,7 +179,9 @@ fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
     };
     let mut reader = quick_xml::Reader::from_reader(BufReader::new(f));
     let mut buf = Vec::new();
-    let mut total = 0u64;
+    let (mut total, mut total_bytes) = (0u64, 0u64);
+    // 칸 상태(글자 바이트)
+    let (mut in_cell, mut cell_bytes, mut cell_rep, mut row_bytes) = (false, 0u64, 1u64, 0u64);
     // 시트 상태
     let (mut rows_seen, mut first_row, mut last_row_end) = (0u64, None::<u64>, 0u64);
     let (mut col_min, mut col_max) = (u64::MAX, 0u64);
@@ -169,7 +195,13 @@ fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
             Event::Empty(e) => (Some(e), false),
             Event::End(e) => {
                 match e.local_name().as_ref() {
+                    "table-cell" | "covered-table-cell" if in_cell => {
+                        row_bytes = row_bytes.saturating_add(cell_bytes.saturating_mul(cell_rep));
+                        in_cell = false;
+                    }
                     "table-row" => {
+                        total_bytes = total_bytes.saturating_add(row_bytes.saturating_mul(row_rep));
+                        row_bytes = 0;
                         if let Some(f) = row_first {
                             first_row.get_or_insert(rows_seen);
                             last_row_end = rows_seen + row_rep;
@@ -187,8 +219,20 @@ fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
                     }
                     _ => {}
                 }
-                if total > ODS_MAX_CELLS {
+                if total > ODS_MAX_CELLS || total_bytes > MAX_SHEET_TEXT_BYTES {
                     return Err(FailKind::TooLarge);
+                }
+                continue;
+            }
+            Event::Text(t) => {
+                if in_cell {
+                    cell_bytes += t.len() as u64;
+                }
+                continue;
+            }
+            Event::CData(t) => {
+                if in_cell {
+                    cell_bytes += t.len() as u64;
                 }
                 continue;
             }
@@ -200,18 +244,25 @@ fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
             "table-row" => {
                 row_rep = num(e, "number-rows-repeated").min(MAX_ROWS.saturating_sub(rows_seen));
                 (col, row_first, row_last) = (0, None, 0);
+                row_bytes = 0;
                 if !has_body {
                     rows_seen += row_rep; // 칸 없는 빈 행
                 }
             }
             "table-cell" | "covered-table-cell" => {
                 let rep = num(e, "number-columns-repeated").min(MAX_COLS.saturating_sub(col));
-                let filled = has_body || attr(e, "value-type").is_some() || attr(e, "formula").is_some();
+                let (attr_filled, attr_bytes) = cell_attrs(e);
+                let filled = has_body || attr_filled;
                 if filled && rep > 0 {
                     row_first.get_or_insert(col);
                     row_last = col + rep - 1;
                 }
                 col += rep;
+                if has_body {
+                    (in_cell, cell_bytes, cell_rep) = (true, attr_bytes, rep);
+                } else {
+                    row_bytes = row_bytes.saturating_add(attr_bytes.saturating_mul(rep));
+                }
             }
             _ => {}
         }
@@ -329,6 +380,55 @@ mod tests {
         assert_eq!(d.blocks.first().map(|b| (b.kind.clone(), b.text.as_str())), Some((BlockKind::Heading, "시트")));
         assert!(d.blocks.iter().any(|b| b.text.contains("11")), "{:?}", d.blocks);
         assert_eq!(to_rows(vec![(0, 0, "a".into()), (5, 16_383, "b".into())]), vec![vec!["a".to_string()], vec![String::new(), "b".to_string()]]);
+    }
+
+    #[test]
+    fn value_without_value_type_counts_as_filled() {
+        // value-type 없이 office:value 만 있는 자기 닫힘 칸도 calamine 은 값으로 읽는다 → 추정에도 들어가야 한다.
+        let bytes = ods_with(
+            r#"<table:table-row table:number-rows-repeated="1000"><table:table-cell office:value="1" table:number-columns-repeated="16384"/></table:table-row>"#,
+        );
+        let t = Instant::now();
+        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooLarge));
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn long_repeated_ods_cell_is_too_large_by_bytes() {
+        // 100KB 글자 × 1000열 × 1000행 = 100만 칸(칸 수 상한 안)이지만 100GB.
+        let long = "가".repeat(33_000);
+        let bytes = ods_with(&format!(
+            r#"<table:table-row table:number-rows-repeated="1000"><table:table-cell table:number-columns-repeated="1000" office:value-type="string"><text:p>{long}</text:p></table:table-cell></table:table-row>"#
+        ));
+        let t = Instant::now();
+        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooLarge));
+        assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn shared_string_referenced_by_many_cells_is_too_large() {
+        // 1MB 공유 문자열을 100칸이 가리킨다 → 복제하면 100MB.
+        let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
+        let wb = r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="시트" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+        let wb_rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>"#;
+        let sst = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="1" uniqueCount="1"><si><t>{}</t></si></sst>"#,
+            "a".repeat(1 << 20)
+        );
+        let rows: String = (1..=100).map(|i| format!(r#"<row r="{i}"><c r="A{i}" t="s"><v>0</v></c></row>"#)).collect();
+        let ws = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#
+        );
+        let bytes = zip_of(&[
+            ("_rels/.rels", rels.as_bytes()),
+            ("xl/workbook.xml", wb.as_bytes()),
+            ("xl/_rels/workbook.xml.rels", wb_rels.as_bytes()),
+            ("xl/sharedStrings.xml", sst.as_bytes()),
+            ("xl/worksheets/sheet1.xml", ws.as_bytes()),
+        ]);
+        let t = Instant::now();
+        assert_eq!(sheet(&bytes, false).err(), Some(FailKind::TooLarge));
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
     }
 
     #[test]
