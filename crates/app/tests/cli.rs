@@ -218,6 +218,28 @@ fn any_corrupt_meta_page_is_rebuilt() {
     assert!(mid_run > 0, "열 때가 아니라 도중에 드러나는 손상도 시험되어야 한다({pages}쪽)");
 }
 
+/// 손상된 행(읽을 수 없는 doc JSON): index 가 매번 같은 오류로 실패하지 않고 한 번 다시 만든다(스펙 §5.3·§6.8).
+#[test]
+fn damaged_doc_row_is_rebuilt() {
+    let e = Env::new();
+    e.index();
+    let home = platform::paths::Home::new(e.home.path());
+    let key = platform::keys::load_or_create(&home.meta_key()).unwrap();
+    {
+        let c = rusqlite::Connection::open(home.meta_db()).unwrap();
+        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        c.pragma_update(None, "key", format!("x'{hex}'")).unwrap();
+        assert!(c.execute("UPDATE content SET doc = '{깨짐' WHERE doc IS NOT NULL", []).unwrap() > 0);
+    }
+    // 이름을 바꾸면 그 내용이 Pending 이 되어 flush 가 doc 을 읽는다 — 거기서 손상이 드러난다.
+    let d = e.docs.path();
+    std::fs::rename(d.join("운영계획.docx"), d.join("새이름.docx")).unwrap();
+    let s = e.index();
+    assert!(s.contains("다시 만듭니다"), "{s}");
+    let r = e.run(&["search", "렛츠런파크"]);
+    assert!(r.contains("새이름.docx"), "{r}");
+}
+
 #[test]
 fn search_before_index_says_run_index() {
     let e = Env::new();

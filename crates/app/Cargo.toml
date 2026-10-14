@@ -17,3 +17,5 @@ clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+# 시험에서 meta.db 의 행을 직접 망가뜨리는 데만 쓴다(index 와 같은 SQLCipher 빌드).
+rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

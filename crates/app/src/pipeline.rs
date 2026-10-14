@@ -151,6 +151,7 @@ pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], time
         let Some(f) = store.meta.files_of(id)?.into_iter().next() else { continue };
         // 바뀌었지만 해시를 못 한 파일은 옛 내용 id 를 가리킨 채 남는다 — 새 바이트를 옛 해시의 내용에 넣지 않도록,
         // 기록된 크기·수정 시각이 이번 훑기와 같을 때만 다시 읽는다(다르면 다음 실행의 diff 가 처리한다).
+        // 남은 경쟁: 비교 기준이 훑을 때 잰 값이라, 긴 실행 중(훑기 뒤)에 고친 파일은 여기를 지나칠 수 있다(KI, Task 18).
         if scanned.get(f.path.as_str()) != Some(&(f.size, f.mtime_ns)) {
             continue;
         }

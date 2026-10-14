@@ -118,6 +118,7 @@ dependencies = [
  "extract",
  "index",
  "platform",
+ "rusqlite",
  "tempfile",
 ]
 

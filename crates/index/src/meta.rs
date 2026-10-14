@@ -116,8 +116,11 @@ fn state_of(v: i64) -> State {
 
 fn content_row(r: &rusqlite::Row) -> rusqlite::Result<Content> {
     let hash: Vec<u8> = r.get(1)?;
-    // 16바이트가 아니면 손상된 행 — panic 대신 오류로 올린다.
-    let h = <[u8; 16]>::try_from(&hash[..]).map_err(|_| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Blob, "해시 길이가 16바이트가 아님".into()))?;
+    // 16바이트가 아니면 손상된 행 — panic 대신 SQLITE_CORRUPT 로 올린다. From 이 WrongKeyOrCorrupt 로 바꿔
+    // 앱이 다시 색인한다(고칠 방법이 그것뿐, 스펙 §5.3·§6.8).
+    let h = <[u8; 16]>::try_from(&hash[..]).map_err(|_| {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT), Some("해시 길이가 16바이트가 아님".into()))
+    })?;
     Ok(Content {
         id: r.get(0)?,
         hash: u128::from_le_bytes(h),
@@ -268,10 +271,8 @@ impl Meta {
         let s: Option<Option<String>> = self.conn.query_row("SELECT doc FROM content WHERE id = ?1", [content_id], |r| r.get(0)).optional()?;
         match s.flatten() {
             None => Ok(None),
-            // 손상·비호환 JSON 을 조용히 "본문 없음"으로 바꾸면 파일명만 색인된다 — 오류로 올린다.
-            Some(j) => serde_json::from_str(&j).map(Some).map_err(|e| {
-                MetaError::Sql(rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
-            }),
+            // 손상·비호환 JSON 을 조용히 "본문 없음"으로 바꾸면 파일명만 색인된다 — 손상으로 올려 앱이 다시 색인하게 한다(스펙 §5.3·§6.8).
+            Some(j) => serde_json::from_str(&j).map(Some).map_err(|_| MetaError::WrongKeyOrCorrupt),
         }
     }
 
@@ -455,8 +456,10 @@ mod tests {
         let mut m = Meta::open(&dir.path().join("meta.db"), &[6u8; 32]).unwrap();
         let id = m.insert_content(1, &data("가")).unwrap();
         m.conn.execute("UPDATE content SET doc = '{깨짐' WHERE id = ?1", [id]).unwrap();
-        assert!(matches!(m.doc(id), Err(MetaError::Sql(_))));
+        // 손상된 행은 다시 색인으로만 고칠 수 있다 — 앱이 다시 만들도록 WrongKeyOrCorrupt(스펙 §5.3·§6.8).
+        assert!(matches!(m.doc(id), Err(MetaError::WrongKeyOrCorrupt)));
         m.conn.execute("UPDATE content SET hash = x'0102' WHERE id = ?1", [id]).unwrap();
-        assert!(matches!(m.content(id), Err(MetaError::Sql(_))));
+        assert!(matches!(m.content(id), Err(MetaError::WrongKeyOrCorrupt)));
+        assert!(matches!(m.content_by_hash(1), Ok(None)), "행을 못 찾은 것은 손상이 아니다");
     }
 }
