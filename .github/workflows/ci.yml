@@ -20,6 +20,9 @@ jobs:
       - name: libclang (windows)
         if: runner.os == 'Windows'
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Strawberry Perl for vendored OpenSSL (windows)
+        if: runner.os == 'Windows'
+        run: echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> $env:GITHUB_ENV
       - run: cargo build --workspace --release
       - name: put llama DLLs next to binaries (windows)
         if: runner.os == 'Windows'
