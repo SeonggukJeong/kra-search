@@ -28,6 +28,24 @@ pub fn default_roots() -> Vec<PathBuf> {
 /// 형식별 전체 개수는 따로 센다(FormatCount.found).
 pub const PER_FORMAT_CAP: usize = 3_000;
 
+/// 토큰 비율·청크·카드 통계는 문서 본문이 이 글자 수 이하일 때만 부모 프로세스에서 계산한다.
+/// 줄바꿈 없는 거대한 로그 .txt 는 한 문단이 되어 `cut_to` 가 O(n²) 로 느려진다(KI-001) — 부모에는 시간 제한이 없다.
+pub const STATS_MAX_CHARS: usize = 200_000;
+
+fn within_stats_cap(doc: &doc::Document) -> bool {
+    let mut n = 0usize;
+    for b in &doc.blocks {
+        n += b.text.chars().count() + 1;
+        if n > STATS_MAX_CHARS {
+            return false;
+        }
+    }
+    true
+}
+
+/// 부모가 실행 파일 옆 pdfium 을 불러올 수 있었는지(보고서 pdfium_loaded).
+pub static PDFIUM_LOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn is_target(p: &Path) -> bool {
     Format::from_path(p).is_some() && !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("~$"))
 }
@@ -59,6 +77,10 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>) -> usize {
             }
             let p = e.path();
             if md.is_dir() {
+                // 일부만 내려받은 클라우드 폴더는 들어가지 않는다(열거도 내려받기를 일으킬 수 있다 — DEC-022).
+                if is_cloud_placeholder(&md) {
+                    continue;
+                }
                 let name = e.file_name().to_string_lossy().to_lowercase();
                 if !SKIP_DIRS.contains(&name.as_str()) {
                     stack.push(p);
@@ -84,17 +106,20 @@ fn sample_per_format(files: Vec<PathBuf>, cap: usize) -> (Vec<PathBuf>, BTreeMap
         }
     }
     let mut found = BTreeMap::new();
-    let mut out = Vec::new();
+    // 중간에 멈춰도 모든 형식이 조금씩은 들어 있도록 형식별 진행률(j/m) 순으로 섞는다.
+    let mut keyed: Vec<(u64, &'static str, PathBuf)> = Vec::new();
     for (ext, mut v) in by {
         found.insert(ext, v.len());
         v.sort();
         let n = v.len();
-        if n <= cap {
-            out.extend(v);
-        } else {
-            out.extend((0..cap).map(|i| v[i * n / cap].clone()));
+        let picked: Vec<PathBuf> = if n <= cap { v } else { (0..cap).map(|i| v[i * n / cap].clone()).collect() };
+        let m = picked.len() as u64;
+        for (j, p) in picked.into_iter().enumerate() {
+            keyed.push((j as u64 * 1_000_000 / m, ext, p));
         }
     }
+    keyed.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then_with(|| a.2.cmp(&b.2)));
+    let out: Vec<PathBuf> = keyed.into_iter().map(|k| k.2).collect();
     (out, found)
 }
 
@@ -143,6 +168,7 @@ impl Acc {
         x.coverage_median = percentile(&mut self.coverages.clone(), 0.5);
         x.coverage_p10 = percentile(&mut self.coverages.clone(), 0.1);
         x.coverage_below_90 = self.coverages.iter().filter(|c| **c < 0.9).count();
+        x.pdfium_loaded = PDFIUM_LOADED.load(std::sync::atomic::Ordering::Relaxed);
         x.by_format = self.by_format.values().cloned().collect();
         if !self.card_tokens.is_empty() {
             x.card_tokens_mean = Some(self.card_tokens.iter().sum::<f64>() / self.card_tokens.len() as f64);
@@ -172,6 +198,7 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
         unreadable: x.unreadable,
         found: x.found,
         cloud_only: x.cloud_only,
+        stats_skipped_huge: x.stats_skipped_huge,
         pdf_pages: x.pdf_pages,
         pdf_bad_pages: x.pdf_bad_pages,
         article_numbered_docs: x.article_numbered_docs,
@@ -184,6 +211,8 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
 pub fn run(roots: &[PathBuf], tokenizer: Option<&Tokenizer>, on_progress: &mut dyn FnMut(&ExtractInfo)) -> ExtractInfo {
     let exe = std::env::current_exe().expect("current exe");
     let pdfium = exe.parent().map(|d| d.join(extract::pdf::LIB_NAME)).filter(|p| p.exists());
+    // 부모에서도 한 번 불러 보아 실제로 불러와지는지 기록한다(없음·손상과 진짜 PDF 실패를 구별).
+    PDFIUM_LOADED.store(pdfium.as_ref().is_some_and(|p| extract::pdf::init(p).is_ok()), std::sync::atomic::Ordering::Relaxed);
     let extract = |f: &Path, coverage: bool| {
         let mut cmd = Command::new(&exe);
         cmd.arg("extract-one").arg(f);
@@ -253,7 +282,9 @@ pub fn run_with(
                     a.coverages.push(c as f64);
                 }
                 a.x.distribution += distribution as usize;
-                if let Some(tk) = tokenizer {
+                if tokenizer.is_some() && !within_stats_cap(&doc) {
+                    a.x.stats_skipped_huge += 1;
+                } else if let Some(tk) = tokenizer {
                     let text: String = doc.blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n");
                     let chars = text.chars().count();
                     if chars >= 200 {
@@ -374,5 +405,50 @@ mod tests {
         };
         super::run_with(&[dir.path().to_path_buf()], None, &fake, 0, &mut |_| {});
         assert_eq!(requested.get(), 2, "HWP 는 모두 잰다");
+    }
+
+    #[test]
+    fn processing_order_covers_every_format_early() {
+        use std::path::PathBuf;
+        let files: Vec<PathBuf> = (0..50)
+            .map(|i| PathBuf::from(format!("{i:02}.txt")))
+            .chain((0..4).map(|i| PathBuf::from(format!("{i}.hwp"))))
+            .chain((0..4).map(|i| PathBuf::from(format!("{i}.pdf"))))
+            .collect();
+        let (s, _) = super::sample_per_format(files, 3_000);
+        let head: Vec<&str> = s.iter().take(6).filter_map(|p| p.extension()?.to_str()).collect();
+        for e in ["txt", "hwp", "pdf"] {
+            assert!(head.contains(&e), "앞 6개에 {e} 없음: {head:?}");
+        }
+    }
+
+    #[test]
+    fn huge_document_is_over_stats_cap() {
+        let mk = |n: usize| doc::Document { title: None, blocks: vec![doc::Block { kind: doc::BlockKind::Paragraph, text: "가".repeat(n) }] };
+        assert!(super::within_stats_cap(&mk(super::STATS_MAX_CHARS - 10)));
+        assert!(!super::within_stats_cap(&mk(5_000_000)));
+    }
+
+    /// 모델이 있으면: 줄바꿈 없는 거대한 문단이 통계 계산 때문에 멈추지 않는다(KI-001).
+    #[test]
+    fn huge_single_paragraph_does_not_stall() {
+        let models = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"));
+        let Some(m) = crate::bench::list_models(&models).into_iter().next() else {
+            eprintln!("skip: no model");
+            return;
+        };
+        let Ok(tk) = embed::engine::Tokenizer::load(&m, None) else { return };
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        let fake = |_: &std::path::Path, _: bool| extract::runner::Outcome::Ok {
+            doc: doc::Document { title: None, blocks: vec![doc::Block { kind: doc::BlockKind::Paragraph, text: "로그 줄 ".repeat(1_000_000) }] },
+            distribution: false,
+            coverage: None,
+            stats: Default::default(),
+        };
+        let t = std::time::Instant::now();
+        let x = super::run_with(&[dir.path().to_path_buf()], Some(&tk), &fake, 0, &mut |_| {});
+        assert!(t.elapsed().as_secs() < 20, "{:?}", t.elapsed());
+        assert_eq!((x.ok, x.stats_skipped_huge), (1, 1));
     }
 }

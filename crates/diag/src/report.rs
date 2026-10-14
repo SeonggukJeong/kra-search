@@ -122,6 +122,12 @@ pub struct ExtractInfo {
     /// 열지 않고 건너뛴 클라우드 자리표시자 수(OneDrive 온라인 전용 등)
     #[serde(default)]
     pub cloud_only: usize,
+    /// 본문이 너무 길어(STATS_MAX_CHARS 초과) 토큰·청크·카드 통계를 건너뛴 문서 수
+    #[serde(default)]
+    pub stats_skipped_huge: usize,
+    /// 실행 파일 옆 pdfium 을 불러올 수 있었는가(없으면 모든 PDF 가 실패한다 — 경로는 기록하지 않음)
+    #[serde(default)]
+    pub pdfium_loaded: bool,
     #[serde(default)]
     pub by_format: Vec<FormatCount>,
     #[serde(default)]
@@ -227,7 +233,7 @@ pub fn summarize(r: &Report) -> Vec<String> {
         s.push(format!(
             "문서 {}개{}{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · 형식 아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · 추출 커버리지 {} · {:.0}초",
             thousands(x.total as f64),
-            if x.found > x.total { format!("(전체 {}개 중 형식마다 최대 3,000개)", thousands(x.found as f64)) } else { String::new() },
+            if x.found > x.total { format!("(전체 {}개 중 형식마다 최대 {}개)", thousands(x.found as f64), thousands(crate::extract_stats::PER_FORMAT_CAP as f64)) } else { String::new() },
             if x.processed < x.total { format!("(중간 저장 — {}개 확인)", thousands(x.processed as f64)) } else { String::new() }, pct(x.ok, x.processed.max(1)), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
             x.not_container, if top.is_empty() { "-".into() } else { top.join(" ") }, x.timeout, x.crashed,
             x.tokens_per_1k_chars_median.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
@@ -257,6 +263,11 @@ pub fn summarize(r: &Report) -> Vec<String> {
                 .collect();
             s.push(format!("형식별 읽기 성공: {}", parts.join(" · ")));
         }
+        s.push(format!(
+            "PDF 부품(pdfium) {} · 너무 길어 통계 건너뜀 {}개",
+            if x.pdfium_loaded { "불러옴" } else { "불러오지 못함(PDF 읽기 실패는 이 때문일 수 있음)" },
+            x.stats_skipped_huge
+        ));
         if x.pdf_pages > 0 {
             s.push(format!("PDF 쪽: 전체 {} · 비었거나 깨져 버린 쪽 {}", thousands(x.pdf_pages as f64), thousands(x.pdf_bad_pages as f64)));
         }

@@ -5,10 +5,10 @@
 
 | ID | 문제 | 위치 | 영향 | 고칠 방법(제안) | 계기 | 상태 |
 |---|---|---|---|---|---|---|
-| KI-001 | 아주 긴 문단(15만 자)에서 `cut_to` 가 O(n² log n) — 4.1초 | `embed/src/chunk.rs` | 거대한 한 문단 문서의 색인 지연 | 탐색 창을 max_tokens 근처로 제한 | M1 색인 파이프라인 | 미해결 |
+| KI-001 | 아주 긴 문단(15만 자)에서 `cut_to` 가 O(n² log n) — 4.1초 | `embed/src/chunk.rs` | 거대한 한 문단 문서의 색인 지연. 진단(`diag`)도 줄바꿈 없는 로그 .txt 로 겪어 `STATS_MAX_CHARS`(20만 자) 초과 문서는 통계를 건너뛴다(보고서 `stats_skipped_huge`) | 탐색 창을 max_tokens 근처로 제한 | M1 색인 파이프라인 | 미해결 |
 | KI-002 | 모든 스레드 측정이 실패하면 요약이 "초당 0토큰(0스레드)", `rss_mb_peak` 는 실제 최대가 아니라 표본 | `diag/src/bench.rs`, `report.rs` | 진단 해석 혼동 | 실패 시 "-" 표시, 최대값은 주기 표본 또는 OS 최대 작업 집합 | 다음 진단 릴리즈 | 해결(m1-diag-1): 측정 전부 실패 시 "초당 토큰 -(측정 실패)", 최대 메모리는 Windows PeakWorkingSetSize |
 | KI-003 | llama.cpp 로그(모델 경로 포함)가 콘솔에 대량 출력 | `embed/src/engine.rs` | 화면 소음, 경로 노출(보고서에는 안 남음) | `llama_log_set` 으로 무음 또는 우리 로그로 전달 | M1 엔진 정리 | 미해결 |
-| KI-004 | 릴리즈가 VC++ 런타임을 러너 `System32` 에서 복사(VS 재배포 폴더 아님), GitHub Actions 를 태그로 고정(SHA 아님), ~~수동 점검표가 zip 에 없음~~ | `.github/workflows/release-m0.yml` | 재현성·공급망 | VS `Redist\MSVC` 경로 사용, 액션 SHA 고정 | 제품 설치 파일 작업(M7) | 점검표 동봉은 해결(m0-diag-5), 나머지 미해결 |
+| KI-004 | 릴리즈가 VC++ 런타임을 러너 `System32` 에서 복사(VS 재배포 폴더 아님), GitHub Actions 를 태그로 고정(SHA 아님), ~~수동 점검표가 zip 에 없음~~(m1-diag 부터 점검표를 동봉하지 않는다) | `.github/workflows/release-diag.yml` | 재현성·공급망 | VS `Redist\MSVC` 경로 사용, 액션 SHA 고정 | 제품 설치 파일 작업(M7) | 점검표 동봉은 해결(m0-diag-5), 나머지 미해결 |
 | KI-005 | `fetch-models.sh` 가 `resolve/main` 에서 받고 SHA-256 검증 안 함 | `tools/fetch-models.sh` | 모델이 바뀌어도 모름 | 리비전 고정 + SHA-256 검증 | 모델 확정(M0 Task 13) | 해결: 리비전 `031f0d4b` + SHA-256 검증(2026-10-14, Q8_0 확정) |
 | KI-006 | ~~m0eval 캐시 키가 말뭉치·청크 설정 무시~~ / ~~캐시를 쓰면 초당 토큰이 0~~ | `m0eval` | 속도 표가 0 | 측정 시간도 캐시에 저장하거나 속도는 따로 측정 | 평가 실행기 손볼 때 | 해결: 캐시 키(INC-014 → DEC-032 항목별), 속도는 청크(400) 192개 고정 표본을 예열 후 매번 측정 |
 | KI-007 | build.rs 가 서브모듈 작업 트리를 직접 수정(패치 적용), `rerun-if-changed` 가 `llama.h` 만 감시 | `crates/llama-sys/build.rs` | vendor 를 바꿔도 재빌드 안 될 수 있음 | OUT_DIR 로 복사 후 패치, 감시 범위 확대 | llama.cpp 업그레이드 | 미해결 |
