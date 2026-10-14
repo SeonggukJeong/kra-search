@@ -79,20 +79,71 @@ struct Running {
     rx: Receiver<String>,
 }
 
+// 워커 재활용(정상 워커를 내려놓고 다음 요청 때 새로 띄움). 파서(rhwp·pdfium)가 잡은 메모리가 프로세스 안에 쌓여
+// 공개 평가 세트 1,000개에서 상주 워커가 490MB 까지 올랐다(문서 하나만 읽으면 최대 158MB). 늘어나는 원인은 응답 크기가 아니라
+// 큰 입력 파일이다 — 그림이 많은 10~48MB HWPX 하나마다 워커가 파일 크기의 약 3배씩 늘고 돌려주지 않았다(응답은 수 KB).
+// 기준별 실측(같은 세트, 워커 최대 RSS · 프로세스 수 · 색인 시간): 재활용 없음 490MB·1·4.8초, 1,000개마다 490MB(세트가 1,000개),
+// 200개마다 403MB·5, 읽은 크기 합 128MB 315MB·13, **64MB 181MB·23·5.1초**, 32MB 104~156MB·38.
+
+/// 상주 워커 하나가 이만큼 파일을 처리하면 새 프로세스로 바꾼다(작은 파일만 아주 많을 때의 안전망).
+pub const RECYCLE_AFTER_FILES: u32 = 1_000;
+/// 지금 프로세스가 읽은 파일 크기 합이 이만큼을 넘으면 새 프로세스로 바꾼다(주된 기준).
+pub const RECYCLE_AFTER_INPUT_BYTES: u64 = 64 * 1024 * 1024;
+/// 응답 줄이 이보다 크면(본문이 큰 문서) 그 응답 직후 새 프로세스로 바꾼다. 큰 응답을 읽느라 커진 앱 쪽 읽기 버퍼도 함께 사라진다.
+pub const RECYCLE_AFTER_LINE_BYTES: usize = 16 * 1024 * 1024;
+
 pub struct Worker {
     make_cmd: Box<dyn Fn() -> Command + Send>,
     running: Option<Running>,
     next_id: u64,
+    /// 시간 초과·비정상 종료로 죽여서 다시 띄운 횟수
     restarts: u32,
+    /// 메모리를 돌려주려고 정상 워커를 바꾼 횟수(restarts 와 따로 센다)
+    recycles: u32,
+    /// 지금 프로세스가 응답한 파일 수와 읽은 파일 크기 합
+    served: u32,
+    served_bytes: u64,
+    recycle_files: u32,
+    recycle_input_bytes: u64,
+    recycle_line_bytes: usize,
 }
 
 impl Worker {
     pub fn new(make_cmd: impl Fn() -> Command + Send + 'static) -> Worker {
-        Worker { make_cmd: Box::new(make_cmd), running: None, next_id: 1, restarts: 0 }
+        Worker {
+            make_cmd: Box::new(make_cmd),
+            running: None,
+            next_id: 1,
+            restarts: 0,
+            recycles: 0,
+            served: 0,
+            served_bytes: 0,
+            recycle_files: RECYCLE_AFTER_FILES,
+            recycle_input_bytes: RECYCLE_AFTER_INPUT_BYTES,
+            recycle_line_bytes: RECYCLE_AFTER_LINE_BYTES,
+        }
+    }
+
+    /// 재활용 기준을 바꾼다(시험·측정용): 파일 수, 읽은 파일 크기 합, 응답 줄 크기.
+    /// 기본은 `RECYCLE_AFTER_FILES`·`RECYCLE_AFTER_INPUT_BYTES`·`RECYCLE_AFTER_LINE_BYTES`.
+    pub fn recycle_after(mut self, files: u32, input_bytes: u64, line_bytes: usize) -> Worker {
+        self.recycle_files = files.max(1);
+        self.recycle_input_bytes = input_bytes;
+        self.recycle_line_bytes = line_bytes;
+        self
     }
 
     pub fn restarts(&self) -> u32 {
         self.restarts
+    }
+
+    pub fn recycles(&self) -> u32 {
+        self.recycles
+    }
+
+    /// 지금 떠 있는 워커 프로세스 id(없으면 None — 다음 요청 때 띄운다).
+    pub fn pid(&self) -> Option<u32> {
+        self.running.as_ref().map(|r| r.child.id())
     }
 
     fn spawn(&self) -> std::io::Result<Running> {
@@ -120,12 +171,29 @@ impl Worker {
     }
 
     /// 지금 워커를 죽이고 다음 요청 때 새로 띄우게 한다.
-    fn discard(&mut self) -> Option<i32> {
+    fn stop(&mut self) -> Option<i32> {
         let mut r = self.running.take()?;
+        self.served = 0;
+        self.served_bytes = 0;
         let _ = r.child.kill();
-        let code = r.child.wait().ok().and_then(|s| s.code());
+        r.child.wait().ok().and_then(|s| s.code())
+    }
+
+    /// 멈추거나 죽은 워커를 버린다(restarts).
+    fn discard(&mut self) -> Option<i32> {
+        let code = self.stop();
         self.restarts += 1;
         code
+    }
+
+    /// 정상 응답 뒤: 정한 개수·입력 크기를 채웠거나 응답이 컸으면 워커를 내려놓는다(recycles). 다음 요청 때 새로 띄운다.
+    fn after_response(&mut self, path: &Path, line_bytes: usize) {
+        self.served += 1;
+        self.served_bytes += std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        if self.served >= self.recycle_files || self.served_bytes > self.recycle_input_bytes || line_bytes > self.recycle_line_bytes {
+            self.stop();
+            self.recycles += 1;
+        }
     }
 
     pub fn extract(&mut self, path: &Path, timeout: Duration) -> Outcome {
@@ -160,7 +228,10 @@ impl Worker {
             let r = self.running.as_mut().expect("running");
             match r.rx.recv_timeout(left) {
                 Ok(json) => match serde_json::from_str::<Response>(&json) {
-                    Ok(resp) if resp.id == id => return resp.outcome,
+                    Ok(resp) if resp.id == id => {
+                        self.after_response(path, json.len());
+                        return resp.outcome;
+                    }
                     _ => continue, // 이전 요청의 늦은 응답·깨진 줄은 버린다
                 },
                 Err(RecvTimeoutError::Timeout) => {
