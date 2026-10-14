@@ -11,6 +11,7 @@ serde_json.workspace = true
 wait-timeout = "0.2"
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 quick-xml = "0.42"
+calamine = { version = "0.36.1", default-features = false }
 rhwp = { path = "../../third_party/rhwp", default-features = false }
 
 [dev-dependencies]

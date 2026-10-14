@@ -221,3 +221,33 @@ fn encrypted_odt_is_encrypted_not_corrupt() {
     // 암호 ODF 는 ZIP 이고 content.xml 이 암호문 — manifest 의 encryption-data 로 알아본다.
     assert_eq!(fail_kind(&extract_one(&office("encrypted.odt"))), Some(FailKind::Encrypted));
 }
+
+#[test]
+fn xlsx_sheets_dates_bools_formulas() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.xlsx")));
+    assert_eq!(title.as_deref(), Some("예산 집계"));
+    assert_eq!(b, vec![
+        kt(Heading, "예산"),
+        kt(TableHeader, "구분 | 금액 | 일자 | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 금액: 1200 | 일자: 2026-03-01 | 비고: 인라인 문자열"),
+        kt(TableRow, "구분: 시설 개선 | 금액: 300.25 | 비고: TRUE"),
+        kt(TableRow, "금액: 1500.25"),
+    ]);
+}
+
+#[test]
+fn huge_repeated_rows_are_cheap() {
+    use doc::BlockKind::*;
+    // sample.ods 끝에는 1,048,573행 × 1,024칸 반복 빈 행이 있다(LibreOffice 파일에 흔함).
+    let t = std::time::Instant::now();
+    let (title, b) = blocks(extract_one(&office("sample.ods")));
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    assert_eq!(title.as_deref(), Some("예산표"));
+    assert_eq!(b, vec![
+        kt(Heading, "예산"),
+        kt(TableHeader, "구분 | 금액 | 일자"),
+        kt(TableRow, "구분: 경마 | 금액: 1200 | 일자: 2026-03-01"),
+        kt(TableRow, "구분: 시설 | 금액: 0.5"),
+    ]);
+}
