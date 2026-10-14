@@ -79,14 +79,14 @@ LLM 요약·질의응답, 붙임 파일 연결, 네트워크 경로, 이미지·
 | 언어 | Rust (stable, MSVC 타깃, 우리 exe 는 CRT 정적 링크 — llama/ggml DLL 은 동적 CRT, DEC-017) | |
 | UI | **Tauri 2** + WebView2 | |
 | 추론 | **llama.cpp — 버전을 직접 관리** | 공개 Rust 바인딩(`llama-cpp-2`)이 gemma-embedding2 지원 이전 llama.cpp를 고정하고 있음(2026-10 기준). 워크스페이스 안에 **얇은 자체 바인딩 크레이트**(`llama-sys`, bindgen, 임베딩 API 약 6개 함수)를 두고 llama.cpp를 git 서브모듈로 고정 |
-| 키워드 색인 | **tantivy** + lindera(ko-dic) | lindera 연동 어댑터는 자체 구현(공개 연동 크레이트가 lindera 최신을 따라가지 못함). 품사 필터로 조사·어미 제거 |
+| 키워드 색인 | **tantivy** + lindera(ko-dic) | lindera 연동 어댑터는 자체 구현(공개 연동 크레이트가 lindera 최신을 따라가지 못함). 품사 필터로 조사·어미 제거. lindera 6.2 embed-ko-dic(DEC-034) |
 | 한글 bigram | **자체 토크나이저** | tantivy `NgramTokenizer`는 위치를 0으로 기록해 구절 검색 불가 → 한글 구간에서만 2글자씩, 실제 위치 기록 |
 | 벡터 저장 | 자체 평면(flat) 저장소, int8 + 이진 | 런타임 CPU 감지로 AVX2/SSE4.2(POPCNT) 경로 선택 |
 | 메타데이터 | SQLite + **SQLCipher** (rusqlite, vendored OpenSSL) | 키는 DPAPI 보호. CI에 Perl 필요 |
-| PDF | **pdfium** (pdfium-render, DLL 동봉) | 스레드 안전하지 않음 → 워커 내 단일 스레드. MuPDF는 AGPL이라 제외 |
+| PDF | **pdfium** (pdfium-render, DLL 동봉) | 스레드 안전하지 않음 → 워커 내 단일 스레드. MuPDF는 AGPL이라 제외. bblanchon/pdfium-binaries chromium/7881 동봉, pdfium-render 0.9.4(DEC-035) |
 | 스프레드시트 | calamine | XLSX/ODS |
 | OOXML/ODF/HWPX | zip + quick-xml 직접 파싱 | |
-| HWP | **rhwp** (git 의존, 리비전 고정) | 라이브러리 API(`parse_document`, `parse_document_with_password`, `rag::build_chunks`) 및 **배포용 문서 복호화 구현됨**. 자체 `extract` 트레이트 뒤에 격리. Rust 툴체인 1.93.1 고정 요구 확인 |
+| HWP | **rhwp** (`tools/fetch-rhwp.sh` 부분 복제·리비전 고정, DEC-008) | 라이브러리 API(`parse_document`, `parse_document_with_password`, `rag::build_chunks`) 및 **배포용 문서 복호화 구현됨**. 자체 `extract` 트레이트 뒤에 격리. Rust 툴체인 1.93.1 고정 요구 확인 |
 | 유사 문서 | SimHash(문자 shingle) | 버전 묶기(§8.4) |
 | 문자 인코딩 | chardetng + encoding_rs | |
 
@@ -125,7 +125,8 @@ LLM 요약·질의응답, 붙임 파일 연결, 네트워크 경로, 이미지·
 | `pii` | 식별번호 탐지, 유형 자리표시자 치환, HMAC | ✔ |
 | `llama-sys` | llama.cpp 고정 버전 + bindgen 바인딩(임베딩 API만) | ✔ |
 | `embed` | 모델 프로필, 문서 카드 생성, 청크 분할, 접두어, MRL 축소·정규화·양자화 | ✔ |
-| `index` | tantivy 스키마·토크나이저, 벡터 저장소, SQLCipher, 하이브리드 검색, 버전 묶기 | ✔ |
+| `index` | tantivy 스키마·토크나이저, SQLCipher, 하이브리드 검색, 버전 묶기 (벡터는 vector 크레이트) | ✔ |
+| `vector` | 벡터 연산(MRL 축소·정규화·int8·이진)·평면 저장소 — 의존성 없음(KI-008) | ✔ |
 | `query` | 검색어 해석(날짜 표현, 번호 형식, 약어 확장, 검색어 유형 분류) | ✔ |
 | `lexicon` | 약어·동의어 사전(내장 + 기관 TSV) | ✔ |
 | `crawler` | 스캔·감시·대기열·우선순위·공정 스케줄링 | ✔(스텁 감시) |
@@ -378,7 +379,7 @@ LLM 요약·질의응답, 붙임 파일 연결, 네트워크 경로, 이미지·
 ### 12.2 3단계 검증
 1. **GitHub Actions (windows 러너, 자동)**: 빌드, 단위·통합 테스트(USN·DPAPI·EFS·서비스·파이프 보안·MSI 설치/제거), E2E(tauri-driver), `cargo-deny`, 릴리즈 산출물 + SHA-256.
 2. **사내 폐쇄망 PC (사용자 수행)**: 마일스톤 단위 릴리즈 반입 → `kra-search.exe --diagnose` → 보고서 반출.
-   - 보고서: 환경(OS 빌드, CPU 명령어, RAM, EFS 가능 여부, WebView2 버전, 단축키 충돌, 감지된 백신, 네트워크 시도 점검), 합성 문서 벤치마크(초당 토큰, 검색 지연), 실제 문서 추출 통계(형식별 성공/실패/DRM/시간 초과, 오류 유형 — **M1 이후**), 정제된 로그.
+   - 보고서: 환경(OS 빌드, CPU 명령어, RAM, EFS 가능 여부, WebView2 버전, 단축키 충돌, 감지된 백신, 네트워크 시도 점검), 합성 문서 벤치마크(초당 토큰, 검색 지연), 실제 문서 추출 통계(형식별 성공/실패/DRM/글자 없음/시간 초과, PDF 쪽 품질, 카드 길이 — m1-diag 부터), 정제된 로그.
    - **문서 본문·파일 경로·개인정보 미포함.** 경로는 확장자+해시만. 사람이 읽을 수 있는 JSON/텍스트. 맨 위에 옮겨 적을 수 있는 요약 몇 줄.
 3. **폐쇄망 내 품질 평가**: 사용자가 `질의<TAB>정답 파일명` TSV 20~50개 작성 → `--eval queries.tsv` → nDCG@10, Recall@20, 실패 질의 번호만 출력.
 
@@ -528,3 +529,4 @@ M7에서 `cargo-about` 등으로 전체 의존성 라이선스 목록을 생성�
 | 23 | 품질 피드백 | 업무 문서는 반출 불가 → 실사용 피드백(로컬 기록 + 사용자가 확인한 반출 보고서)으로 개선. 1차 시범 운영 전 최소 형태 검토 |
 | 24 | 상대 날짜("작년" 등) | 검색 시점 PC 날짜 기준, 순위 가산(필터 아님), 칩으로 바꾼 표현은 검색어에서 제외. 문서 날짜 = 시행일 → 수정일. M2 구현(수정일), M4에서 시행일 반영. 기준 시점 주입으로 평가 재현 |
 | 25 | M0 수치 (2026-10-14) | Q8_0 · 저장 512차원 · 본문 청크 300토큰 · 768비트 해밍 후보 max(1,000, 2%) · 평면 스캔 · 청크 점수 우선 · rhwp 채택 · `Alt+Space` 유지. 근거 `docs/m0/results.md` |
+| 26 | M1 범위 (2026-10-14) | 메타 DB SQLCipher·DPAPI 는 M1, 폴더 감시·EFS·개인정보·공문 구조는 M4~M6, 상주 워커 벽시계 30초, 자동 번호(KI-011)는 진단 결과로 판단. 계획 docs/superpowers/plans/2026-10-14-m1-extract-keyword.md |

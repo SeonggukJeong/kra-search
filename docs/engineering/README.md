@@ -10,6 +10,7 @@
 | [embedding-model.md](embedding-model.md) | 임베딩 모델 사실(차원·프롬프트·토큰) | `crates/embed`, 모델 교체 |
 | [runbooks/upgrade-llama-cpp.md](runbooks/upgrade-llama-cpp.md) | llama.cpp 올리기 | 서브모듈 버전 변경 |
 | [runbooks/upgrade-rhwp.md](runbooks/upgrade-rhwp.md) | rhwp 올리기 | `tools/fetch-rhwp.sh` REV 변경 |
+| [runbooks/upgrade-lindera-pdfium.md](runbooks/upgrade-lindera-pdfium.md) | lindera·pdfium 올리기 | `tools/fetch-ko-dic.sh`·`fetch-pdfium.sh` 버전 변경 |
 | [runbooks/release-diag.md](runbooks/release-diag.md) | 진단 도구 릴리즈 | `m0-diag-*` 태그 |
 
 관련: [스펙](../superpowers/specs/2026-10-12-kra-search-design.md) · [UI 결정(D1~D8)](../design/ui-decisions.md) · [M0 결과](../m0/results.md)

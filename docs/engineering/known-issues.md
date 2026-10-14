@@ -5,9 +5,9 @@
 
 | ID | 문제 | 위치 | 영향 | 고칠 방법(제안) | 계기 | 상태 |
 |---|---|---|---|---|---|---|
-| KI-001 | 아주 긴 문단(15만 자)에서 `cut_to` 가 O(n² log n) — 4.1초 | `embed/src/chunk.rs` | 거대한 한 문단 문서의 색인 지연. 진단(`diag`)도 줄바꿈 없는 로그 .txt 로 겪어 `STATS_MAX_CHARS`(20만 자) 초과 문서는 통계를 건너뛴다(보고서 `stats_skipped_huge`) | 탐색 창을 max_tokens 근처로 제한 | M1 색인 파이프라인 | 미해결 |
+| KI-001 | 아주 긴 문단(15만 자)에서 `cut_to` 가 O(n² log n) — 4.1초 | `embed/src/chunk.rs` | 거대한 한 문단 문서의 색인 지연. 진단(`diag`)도 줄바꿈 없는 로그 .txt 로 겪어 `STATS_MAX_CHARS`(20만 자) 초과 문서는 통계를 건너뛴다(보고서 `stats_skipped_huge`) | 탐색 창을 max_tokens 근처로 제한 | M2 임베딩 파이프라인 | 미해결 |
 | KI-002 | 모든 스레드 측정이 실패하면 요약이 "초당 0토큰(0스레드)", `rss_mb_peak` 는 실제 최대가 아니라 표본 | `diag/src/bench.rs`, `report.rs` | 진단 해석 혼동 | 실패 시 "-" 표시, 최대값은 주기 표본 또는 OS 최대 작업 집합 | 다음 진단 릴리즈 | 해결(m1-diag-1): 측정 전부 실패 시 "초당 토큰 -(측정 실패)", 최대 메모리는 Windows PeakWorkingSetSize |
-| KI-003 | llama.cpp 로그(모델 경로 포함)가 콘솔에 대량 출력 | `embed/src/engine.rs` | 화면 소음, 경로 노출(보고서에는 안 남음) | `llama_log_set` 으로 무음 또는 우리 로그로 전달 | M1 엔진 정리 | 미해결 |
+| KI-003 | llama.cpp 로그(모델 경로 포함)가 콘솔에 대량 출력 | `embed/src/engine.rs` | 화면 소음, 경로 노출(보고서에는 안 남음) | `llama_log_set` 으로 무음 또는 우리 로그로 전달 | M2 임베딩 파이프라인 | 미해결 |
 | KI-004 | 릴리즈가 VC++ 런타임을 러너 `System32` 에서 복사(VS 재배포 폴더 아님), GitHub Actions 를 태그로 고정(SHA 아님), ~~수동 점검표가 zip 에 없음~~(m1-diag 부터 점검표를 동봉하지 않는다) | `.github/workflows/release-diag.yml` | 재현성·공급망 | VS `Redist\MSVC` 경로 사용, 액션 SHA 고정 | 제품 설치 파일 작업(M7) | 점검표 동봉은 해결(m0-diag-5), 나머지 미해결 |
 | KI-005 | `fetch-models.sh` 가 `resolve/main` 에서 받고 SHA-256 검증 안 함 | `tools/fetch-models.sh` | 모델이 바뀌어도 모름 | 리비전 고정 + SHA-256 검증 | 모델 확정(M0 Task 13) | 해결: 리비전 `031f0d4b` + SHA-256 검증(2026-10-14, Q8_0 확정) |
 | KI-006 | ~~m0eval 캐시 키가 말뭉치·청크 설정 무시~~ / ~~캐시를 쓰면 초당 토큰이 0~~ | `m0eval` | 속도 표가 0 | 측정 시간도 캐시에 저장하거나 속도는 따로 측정 | 평가 실행기 손볼 때 | 해결: 캐시 키(INC-014 → DEC-032 항목별), 속도는 청크(400) 192개 고정 표본을 예열 후 매번 측정 |
@@ -22,3 +22,22 @@
 | KI-015 | 그림·개체 캡션은 추출하지 않음(표 캡션만) | `extract/src/walk.rs` | 캡션에만 있는 글자 누락 | 그림·묶음 개체 캡션 문단 추가 | M1 추출 | 해결: 그림·그리기·묶음 개체 캡션(M1 Task 3) |
 | KI-016 | 커버리지 기준(rhwp 조판)이 놓친 글자는 우리도 못 잡음 | `extract/src/coverage.rs` | 조판·추출이 함께 빠뜨리면 1.0 으로 보임 | 다른 기준(한컴 텍스트 저장 결과) 표본 비교 | 실제 문서 이상 사례가 나오면 | 미해결 |
 | KI-017 | 진단 벤치가 스레드 1·2·물리 코어 수만 잰다 — 하이브리드 CPU(성능+효율 코어)에서 물리 코어 수(i7-13700 = 16)는 효율 코어까지 포함해 2→16스레드가 1.7배뿐 | `diag/src/bench.rs` | 최적 스레드 수·카드 완료 시간을 모름 | 1·2·4·6·8·12·16·논리 코어 수로 측정, 성능 코어 수를 보고서에 기록. 앱 스레드 정책(M2)은 이 결과로 정함 | M2 임베딩 스레드 정책, 다음 진단 릴리즈(M5) | 측정 추가(m1-diag-1). 앱 스레드 정책은 M2 |
+| KI-018 | 형태소 사전이 메모리에 약 43MB 상주(사전 페이지) — 상주 앱 유휴 기준 50MB(스펙 §13)에 걸림 | `index::tokenize::Analyzers` | 상주 메모리 초과 | 검색창이 닫혀 있으면 사전 해제, 단축키를 누를 때 다시 불러오기(약 50~70ms) | M5 상주 앱 | 미해결 |
+| KI-019 | 워커 제한 시간이 CPU 시간이 아니라 벽시계 30초 | `extract::worker` | 다른 프로그램이 바쁜 PC 에서 정상 문서가 시간 초과 | Windows `GetProcessTimes` 로 CPU 시간 측정 | M5 상주·성능 프로필 | 미해결 |
+| KI-020 | 폴더 감시 없음 — `kra-search index` 를 실행할 때만 바뀐 파일을 찾음 | `crawler` | 새 문서가 바로 찾히지 않음 | ReadDirectoryChangesW(M5), USN(M6) | M5·M6 | 미해결(계획됨) |
+| KI-021 | DOCX 머리말·꼬리말·각주·메모, PPTX 발표자 메모, 스타일 상속(basedOn)을 읽지 않음 | `extract/src/ooxml.rs` | 그 안에만 있는 글자 검색 불가 | 해당 파트 추가 | 실제 문서에서 필요가 보이면(m1-diag 이후) | 미해결 |
+| KI-022 | calamine 0.36.1 이 quick-xml 0.41 을 따로 끌어옴(중복 빌드) | `Cargo.lock` | 빌드 시간 | calamine 이 0.42 로 올라가면 정리 | calamine 새 버전 | 미해결 |
+| KI-023 | 추출 실패(시간 초과·비정상 종료·읽기 오류) 재시도는 다음 `index` 에서 **한 번뿐**(retries) — 원인(다른 프로그램의 잠금·바쁜 PC)이 오래가면 파일이 바뀔 때까지 파일 이름으로만 찾힘 | `app::pipeline` | 일부 문서 내용 검색 불가 | 상주 앱에서 유휴 시 간격을 늘려 가며 재시도 | M5 상주 앱 | 미해결 |
+| KI-024 | 키워드 토큰 오프셋이 NFKC 정규화한 글자 기준 | `index::tokenize` | 원문 강조 표시 위치가 어긋날 수 있음(전각 글자 등) | 정규화 전 오프셋 대응표 | M3 강조 표시 | 미해결 |
+| KI-025 | 추출기 퍼징(cargo-fuzz, 스펙 §12.3) 아직 없음 — 압축 폭탄·반복 행·손상 파일은 개별 시험만 | `extract` | 알려지지 않은 입력에서 멈춤·과다 메모리(워커 격리로 앱은 안전) | HWP/HWPX/PDF/OOXML 퍼징 대상 추가 | M7 보안성 검토 전 | 미해결 |
+| KI-026 | 앱이 강제 종료되면 파서에서 멈춘 워커가 남아 CPU 를 씀(Windows 는 부모가 죽어도 자식이 안 죽음). 워커 CPU·I/O 우선순위를 낮추지 않음(스펙 §5.1 "백그라운드 모드") | `extract::worker`, `app` | 남은 프로세스·사용자 작업 방해 | Job Object(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)에 워커를 넣고, `SetPriorityClass(PROCESS_MODE_BACKGROUND_BEGIN)` | M5 상주 앱 | 미해결 |
+| KI-027 | M1 색인은 개인정보 치환 **전** 원문을 저장한다 — 주민번호 숫자가 키워드 색인(평문, EFS 는 M5)과 meta.db(SQLCipher)에 들어감(스펙 §7.1-1 "식별번호 숫자 비저장") | `app::pipeline`, `index` | 실제 업무 PC 에서 `kra-search` 를 돌리면 식별번호가 디스크에 남음 — **M4 전에는 실제 업무 PC 에서 실행하지 않는다**(진단은 `kra-diag` 만) | M4 치환을 넣고 `KEYWORD_VERSION` 을 올려 전체 재색인(DEC-041) | M4 개인정보 | 미해결 |
+| KI-028 | 원격 루트(UNC·네트워크 드라이브·"문서" 폴더 리디렉션 `\\server\home$\…`)를 따로 다루지 않음 — 기본 루트가 그대로 SMB 경로가 될 수 있음(스펙 §3.2 는 네트워크 경로를 범위 밖으로 둠). 클라우드 자리표시자는 건너뛰기만 함(DEC-040) | `crawler`, `app::default_roots` | 네트워크 트래픽·느린 색인, 온라인 전용 파일은 내용 검색 불가 | `GetDriveTypeW == DRIVE_REMOTE`·UNC 루트는 건너뛰고 설정 화면에 표시 | M5 설정 | 미해결 |
+| KI-029 | 시험 자료 빈틈: 암호 HWP 표본 없음(스펙 §12.3). OOXML/ODF 의 UTF-16 XML 파트는 Corrupt 로, 옛 `.xls`·`.doc` 를 `.xlsx`·`.docx` 로 이름만 바꾼 파일은 Encrypted 로 분류됨 | `extract` | 실패 분류가 어긋남(파일명 색인은 됨) | rhwp 표본·합성 암호 HWP 확보, OLE 안 `EncryptionInfo` 스트림 유무로 암호/옛 형식 구분, UTF-16 파트 디코딩 | m1-diag 결과에서 해당 실패가 보이면 | 미해결 |
+| KI-030 | DPAPI 오류 분류(어떤 HRESULT 가 "키 분실"이고 어떤 것이 일시적인지) 미확인 — 지금은 `ERROR_INVALID_DATA`·`ERROR_INVALID_PARAMETER`·`NTE_BAD_DATA`·`NTE_BAD_KEY_STATE` 만 키 분실로 보고 나머지는 오류로 끝냄(4개 HRESULT). Windows CI 에서 `protect_roundtrip_and_tamper_fails` 통과 확인(CI 38557788478). 초기화하면 meta.db 에 저장한 루트 목록도 사라짐 | `platform::keys`, `app::store` | 일시 오류인데 색인 전체 재생성, 또는 키 분실인데 매번 오류 | 실제 PC 에서 프로필 이동·암호 재설정 시 오류 코드 수집, 루트는 암호화하지 않는 설정 파일로 | M5 설정 | 미해결 |
+| KI-031 | 읽기 전용 경로의 경합: `search`·`status` 가 존재를 확인한 뒤 파일을 만드는 열기(키, `Meta::open`, `KeywordIndex::open`)를 부른다. 그 사이 동시에 도는 `index` 가 초기화하면 검색이 새 키·DB·색인을 만들 수 있다 | `app` (search/status) | 드묾(초기화는 손상 뒤에만)·저절로 복구됨 | 만들지 않는 API(`keys::load`, SQLITE_OPEN_CREATE 없는 열기, `KeywordIndex::open_existing`) | M5 상주 앱 | 미해결 |
+| KI-032 | 재시도 보호가 훑을 때의 크기·수정 시각과 비교한다 — 긴 실행 중 파일을 고치면 새 바이트가 옛 해시의 내용으로 저장되고, 같은 내용을 공유하는 다른 경로가 있으면 틀린 텍스트가 계속 남는다 | `app::pipeline` | 잘못된 본문 검색 결과 | 재시도 직전에 다시 해시해 저장된 해시와 비교 | M5 상주 앱 | 미해결 |
+| KI-033 | Windows 경로 대소문자: 루트를 다른 대소문자로 다시 주거나 폴더 이름을 대소문자만 바꾸면 전부 삭제 후 다시 추가(재추출 비용) | `crawler`, `app` | 불필요한 재추출 | Windows 에서는 소문자로 비교 | M5 | 미해결 |
+| KI-034 | TXT/CSV 한계: 줄 끝이 `\r` 만 있는 파일은 줄을 나누지 않음, CSV 구분자는 쉼표 고정(세미콜론·탭 미감지), 빈 .txt/.csv 는 NotContainer 로 "열 수 없는 파일"로 보임 | `extract/src/text.rs` | 일부 파일의 본문 구조·표시 | 구분자 추정, 빈 파일은 NoText 로 | 실제 문서에서 필요가 보이면 | 미해결 |
+| KI-035 | Office 한계: PPTX 바닥글·날짜·슬라이드 번호 자리표시자가 슬라이드마다 본문에 들어가 색인 소음, ZIP 수준 암호 항목이 Encrypted 가 아니라 Corrupt, 빈 `<w:tc/>` 셀을 무시해 열이 밀릴 수 있음, PPTX 제목 안 줄바꿈이 소제목에 남음 | `extract/src/ooxml.rs` | 색인 소음·분류 오류 | 자리표시자 종류 거르기, 암호 항목 판별, 빈 셀 유지, 제목 줄바꿈 정리 | m1-diag 결과에서 보이면 | 미해결 |
+| KI-036 | 워커가 시작 직후 죽으면(예: pdfium 초기화 실패) 모든 파일이 Crashed → 한 번 재시도 후 영구히 파일명만 색인됨. 연속 실패 차단기가 없음 | `extract::worker`, `app::pipeline` | 환경 문제 하나로 색인 전체가 내용 없이 끝남 | 연속 실패 N 회에서 중단하고 원인 안내 | M5 상주 앱 | 미해결 |

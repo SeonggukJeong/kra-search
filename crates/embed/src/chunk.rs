@@ -17,7 +17,7 @@ fn cut_to(text: &str, max_tokens: usize, count: &dyn Fn(&str) -> usize) -> Strin
     let idx: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
     let (mut lo, mut hi) = (0usize, idx.len() - 1);
     while lo < hi {
-        let mid = (lo + hi + 1) / 2;
+        let mid = (lo + hi).div_ceil(2);
         if count(&text[..idx[mid]]) <= max_tokens {
             lo = mid
         } else {

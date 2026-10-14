@@ -4,7 +4,7 @@
 설계: `docs/superpowers/specs/2026-10-12-kra-search-design.md` · UI: `docs/design/ui-decisions.md` · 현재 진행: `docs/m0/results.md`
 
 ## 반드시 지킬 것
-- **실행 중 네트워크 0.** HTTP 크레이트 금지(`deny.toml`). 사용자 문서는 PC 밖으로 나가지 않는다.
+- **실행 중 네트워크 0.** HTTP 크레이트 금지 — 실행 의존 그래프 기준(`deny.toml` + `tools/check-no-net.sh`, 빌드 스크립트 전용 예외는 DEC-034). 사용자 문서는 PC 밖으로 나가지 않는다.
 - **진단 보고서(`kra-diag`)에는 문서 내용·경로·파일명·사용자명·컴퓨터명·파일 바이트를 남기지 않는다**(INC-010). 진단 도구는 PC 를 바꾸지 않는다(레지스트리·파일·인증서, DEC-022).
 - 평가 문서 원본(`eval/public/docs/`, `eval/kra/docs/`, `eval/downloads/`)과 `*.gguf` 는 커밋하지 않는다.
 - UI 는 `docs/design/ui-decisions.md`(D1~D8)를 그대로 따른다. 바꾸려면 사용자 승인 후 그 문서의 변경 기록에 남긴다.
@@ -14,6 +14,7 @@
 | 이런 작업이면 | 먼저 볼 것 |
 |---|---|
 | llama.cpp 버전 변경, `crates/llama-sys` 수정 | `docs/engineering/runbooks/upgrade-llama-cpp.md` — **로컬 패치(logits 버퍼) 재적용 필수** |
+| lindera·pdfium 버전 변경, deny.toml 예외 | `docs/engineering/runbooks/upgrade-lindera-pdfium.md` — 사전 캐시 폴더·SHA·wrappers 같이 바꿀 것 |
 | rhwp 버전 변경, `crates/extract` 수정 | `docs/engineering/runbooks/upgrade-rhwp.md` — `rag::build_chunks` 로 되돌리지 말 것(INC-011) |
 | 임베딩 엔진·모델 교체(`crates/embed`) | `docs/engineering/embedding-model.md` |
 | Windows 빌드·CI·릴리즈 워크플로 | `docs/engineering/incidents.md` INC-005·006, `runbooks/release-diag.md` |
@@ -37,4 +38,6 @@ cargo test -p embed --release --test model --test reference -- --include-ignored
 cargo test -p diag --release --test memory -- --include-ignored --test-threads 1
 python3 tools/eval/fetch_all.py && python3 tools/eval/import_local.py eval/kra
 cargo run -p m0eval --release -- --eval eval/public --eval eval/kra
+cargo run -p app --release -- --home /tmp/kra-home index --root <폴더>   # 검색은 … search "검색어"
+cargo run -p m0eval --release -- --eval eval/public --eval eval/kra --keyword --out docs/m1/eval-keyword.md
 ```
