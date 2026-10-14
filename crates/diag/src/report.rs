@@ -82,6 +82,9 @@ pub struct FormatCount {
     pub encrypted: usize,
     pub other_fail: usize,
     pub timeout: usize,
+    /// 추출 프로세스 비정상 종료(예전 보고서는 timeout 에 섞여 있었다)
+    #[serde(default)]
+    pub crashed: usize,
 }
 
 #[derive(Serialize, serde::Deserialize, Default)]
@@ -99,8 +102,15 @@ pub struct ExtractInfo {
     pub not_container: usize,
     pub timeout: usize,
     pub crashed: usize,
+    /// 파일이 100MB 초과
     #[serde(default)]
     pub too_large: usize,
+    /// 파일은 작아도 내부 상한(XML 파트 64MB·ODS 200만 칸 등)을 넘음
+    #[serde(default)]
+    pub too_complex: usize,
+    /// 글자가 MAX_DOC_CHARS(500만 자)를 넘어 뒷부분을 버린 문서
+    #[serde(default)]
+    pub truncated: usize,
     #[serde(default)]
     pub no_text: usize,
     #[serde(default)]
@@ -245,7 +255,10 @@ pub fn summarize(r: &Report) -> Vec<String> {
             },
             x.elapsed_sec
         ));
-        s.push(format!("읽기 오류 {} · 100MB 초과 {} · 클라우드 전용(열지 않음) {}", x.unreadable, x.too_large, x.cloud_only));
+        s.push(format!(
+            "읽기 오류 {} · 100MB 초과 {} · 내용이 너무 많음 {} · 500만 자에서 자름 {} · 클라우드 전용(열지 않음) {}",
+            x.unreadable, x.too_large, x.too_complex, x.truncated, x.cloud_only
+        ));
         if !x.by_format.is_empty() {
             let parts: Vec<String> = x
                 .by_format
@@ -254,6 +267,12 @@ pub fn summarize(r: &Report) -> Vec<String> {
                     let mut p = format!("{} {}/{}", f.ext, thousands(f.ok as f64), thousands(f.total as f64));
                     if f.no_text > 0 {
                         p.push_str(&format!("(글자 없음 {})", f.no_text));
+                    }
+                    if f.timeout > 0 {
+                        p.push_str(&format!("(시간초과 {})", f.timeout));
+                    }
+                    if f.crashed > 0 {
+                        p.push_str(&format!("(비정상종료 {})", f.crashed));
                     }
                     if f.found > f.total {
                         p.push_str(&format!("(전체 {}개 중 표본)", thousands(f.found as f64)));
@@ -329,9 +348,25 @@ mod tests {
 
     #[test]
     fn summary_shows_unreadable_too_large_and_cloud() {
-        let x = ExtractInfo { total: 5, processed: 5, found: 5, unreadable: 1, too_large: 2, cloud_only: 3, ..Default::default() };
+        let x = ExtractInfo { total: 5, processed: 5, found: 5, unreadable: 1, too_large: 2, too_complex: 4, truncated: 6, cloud_only: 3, ..Default::default() };
         let r = Report { extract: Some(x), ..Default::default() };
         let s = summarize(&r).join("\n");
-        assert!(s.contains("읽기 오류 1 · 100MB 초과 2 · 클라우드 전용(열지 않음) 3"), "{s}");
+        assert!(s.contains("읽기 오류 1 · 100MB 초과 2 · 내용이 너무 많음 4 · 500만 자에서 자름 6 · 클라우드 전용(열지 않음) 3"), "{s}");
+    }
+
+    /// 형식별 줄: 시간 초과와 비정상 종료를 따로 보인다(예전에는 비정상 종료도 timeout 에 셌다).
+    #[test]
+    fn per_format_summary_separates_timeout_and_crash() {
+        let f = FormatCount { ext: "pdf".into(), found: 4, total: 4, ok: 1, timeout: 1, crashed: 2, ..Default::default() };
+        let x = ExtractInfo { total: 4, processed: 4, found: 4, by_format: vec![f], ..Default::default() };
+        let s = summarize(&Report { extract: Some(x), ..Default::default() }).join("\n");
+        assert!(s.contains("pdf 1/4(시간초과 1)(비정상종료 2)"), "{s}");
+    }
+
+    /// 옛 보고서(새 항목 없음)도 읽힌다.
+    #[test]
+    fn old_report_without_new_fields_still_parses() {
+        let f: FormatCount = serde_json::from_str(r#"{"ext":"hwp","found":1,"total":1,"ok":1,"no_text":0,"drm":0,"encrypted":0,"other_fail":0,"timeout":0}"#).unwrap();
+        assert_eq!(f.crashed, 0);
     }
 }

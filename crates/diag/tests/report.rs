@@ -143,7 +143,11 @@ fn per_format_stats_and_no_paths() {
     let txt = std::fs::read_to_string(out.path().join("kra-diag-summary.txt")).unwrap();
     let json = std::fs::read_to_string(out.path().join("kra-diag-report.json")).unwrap();
     assert!(txt.contains("docx 1/1") && txt.contains("csv 1/1") && txt.contains("hwp 1/1"), "{txt}");
-    assert!(txt.contains("읽기 오류 0 · 100MB 초과 0"), "{txt}");
+    assert!(txt.contains("읽기 오류 0 · 100MB 초과 0 · 내용이 너무 많음 0 · 500만 자에서 자름 0"), "{txt}");
+    // 새 집계 항목(숫자만): 비정상 종료(형식별), 내부 상한, 잘린 문서
+    for key in ["\"crashed\"", "\"too_complex\"", "\"truncated\""] {
+        assert!(json.contains(key), "{key} 없음");
+    }
     for needle in ["홍길동", "인사", "명단", "일정", "kra diag"] {
         assert!(!json.contains(needle) && !txt.contains(needle), "leaked {needle:?}");
     }

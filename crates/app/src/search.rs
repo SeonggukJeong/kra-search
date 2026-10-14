@@ -20,6 +20,7 @@ pub fn fail_label(fail: &str) -> &'static str {
         "Drm" => "보안 문서 — 파일 이름으로만 찾을 수 있음",
         "Encrypted" => "암호가 걸린 문서 — 파일 이름으로만 찾을 수 있음",
         "TooLarge" => "100MB 넘는 파일 — 파일 이름으로만 찾을 수 있음",
+        "TooComplex" => "내용이 너무 많은 문서 — 파일 이름으로만 찾을 수 있음",
         "NoText" => "글자가 없는 문서(스캔 등) — 파일 이름으로만 찾을 수 있음",
         "Timeout" => "읽는 데 너무 오래 걸린 파일 — 파일 이름으로만 찾을 수 있음",
         _ => "열 수 없는 파일 — 파일 이름으로만 찾을 수 있음",
@@ -42,4 +43,17 @@ pub fn search(store: &Store, query: &str, limit: usize) -> Result<Vec<Hit>, Stri
         out.push(Hit { content_id: id, score, title, paths, fail: c.fail });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fail_label;
+
+    /// 100MB 상한(TooLarge)과 내부 상한(TooComplex)은 다른 안내 — 3MB ODS 가 "100MB 넘는 파일"로 보이면 안 된다.
+    #[test]
+    fn too_complex_is_not_shown_as_too_large() {
+        assert!(fail_label("TooLarge").starts_with("100MB 넘는 파일"));
+        assert_eq!(fail_label("TooComplex"), "내용이 너무 많은 문서 — 파일 이름으로만 찾을 수 있음");
+        assert!(fail_label("Corrupt").starts_with("열 수 없는 파일"));
+    }
 }

@@ -56,6 +56,25 @@ pub(crate) fn push(out: &mut Vec<Block>, kind: BlockKind, text: &str) {
     }
 }
 
+/// 블록 글자 합이 `max` 를 넘지 않게 한다: 넘는 블록은 글자 경계에서 자르고 그 뒤 블록은 버린다. 잘랐으면 true.
+pub(crate) fn cap_blocks(blocks: &mut Vec<Block>, max: usize) -> bool {
+    let mut left = max;
+    for i in 0..blocks.len() {
+        let text = &mut blocks[i].text;
+        match text.char_indices().nth(left) {
+            Some((end, _)) => {
+                text.truncate(end);
+                // 잘린 블록이 비면 버린다(빈 블록을 내보내지 않는다)
+                let keep = if blocks[i].text.is_empty() { i } else { i + 1 };
+                blocks.truncate(keep);
+                return true;
+            }
+            None => left -= text.chars().count(),
+        }
+    }
+    false
+}
+
 /// 프로그램이 새 문서에 넣는 기본 제목(소문자, 공백 하나로 정리한 뒤 비교).
 const PLACEHOLDER_TITLES: &[&str] = &[
     "untitled",
@@ -129,6 +148,22 @@ mod tests {
         let mut v = Vec::new();
         push(&mut v, BlockKind::Paragraph, "  \n ");
         assert!(v.is_empty());
+    }
+
+    #[test]
+    fn cap_blocks_cuts_at_char_boundary_and_drops_the_rest() {
+        let b = |t: &str| Block { kind: BlockKind::Paragraph, text: t.into() };
+        let mut v = vec![b("가나다"), b("라마바사"), b("아자")];
+        assert!(cap_blocks(&mut v, 5));
+        assert_eq!(v, vec![b("가나다"), b("라마")]);
+        // 블록 경계에서 딱 맞으면 다음 블록은 비므로 버린다
+        let mut v = vec![b("가나다"), b("라마")];
+        assert!(cap_blocks(&mut v, 3));
+        assert_eq!(v, vec![b("가나다")]);
+        // 상한 안이면 그대로
+        let mut v = vec![b("가나다"), b("라마")];
+        assert!(!cap_blocks(&mut v, 5));
+        assert_eq!(v.len(), 2);
     }
 
     #[test]

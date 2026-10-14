@@ -26,8 +26,10 @@ pub enum FailKind {
     Corrupt,
     NotContainer,
     Unsupported,
-    /// 100MB 초과 — 내용을 읽지 않음
+    /// 파일이 100MB 초과(`format::MAX_FILE_BYTES`) — 내용을 읽지 않음. 이 경우에만 쓴다.
     TooLarge,
+    /// 파일은 작아도 내부 상한을 넘음(압축 해제한 XML 파트 64MB·zip 합계 256MB·시트 글자 64MB·ODS 200만 칸 등) — 파일명만 색인
+    TooComplex,
     /// 글자 층이 없거나 깨짐(스캔 PDF·ToUnicode 없는 PDF 등) — 파일명만 색인
     NoText,
     /// 읽기 오류(권한 없음·다른 프로그램이 잠금·사라짐)
@@ -44,6 +46,7 @@ impl FailKind {
             FailKind::NotContainer => "NotContainer",
             FailKind::Unsupported => "Unsupported",
             FailKind::TooLarge => "TooLarge",
+            FailKind::TooComplex => "TooComplex",
             FailKind::NoText => "NoText",
             FailKind::Unreadable => "Unreadable",
         }
@@ -58,7 +61,15 @@ pub struct Stats {
     pub pdf_bad_pages: u32,
     /// HWP: "제N조" 꼴 자동 번호(개요·문단 번호)를 쓰는 문단 수 — KI-011 판단용
     pub article_numbered_paras: u32,
+    /// 글자가 `MAX_DOC_CHARS` 를 넘어 뒷부분을 버렸다(스펙 §6.5 `flags.truncated`). 옛 워커 응답에는 없다.
+    #[serde(default)]
+    pub truncated: bool,
 }
+
+/// 문서 하나에서 워커 밖으로 내보내는 글자 수 상한(블록 글자 합). 워커 → 앱 파이프, 앱 메모리, meta.db 의 문서 JSON 크기를 묶는다.
+/// `index::keyword::BODY_MAX_CHARS` 와 같은 값이어야 한다 — extract 는 index 에 의존하지 않으므로 값을 따로 두고,
+/// 두 크레이트를 다 쓰는 app 이 컴파일할 때 같은지 확인한다(`app/src/lib.rs`).
+pub const MAX_DOC_CHARS: usize = 5_000_000;
 
 pub struct Extracted {
     pub doc: doc::Document,
@@ -73,7 +84,16 @@ pub trait Decryptor: Send + Sync {
 }
 
 /// 바이트에서 추출. 실패하면 (유형, 앞 8바이트 16진수 — 진단 통계용)을 돌려준다.
+/// 결과 글자는 모든 형식 공통으로 `MAX_DOC_CHARS` 에서 자르고 `stats.truncated` 를 켠다.
 pub fn extract_bytes(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKind, String)> {
+    let mut x = extract_uncapped(format, bytes)?;
+    if norm::cap_blocks(&mut x.doc.blocks, MAX_DOC_CHARS) {
+        x.stats.truncated = true;
+    }
+    Ok(x)
+}
+
+fn extract_uncapped(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKind, String)> {
     if bytes.is_empty() {
         return Err((FailKind::NotContainer, String::new()));
     }
@@ -103,8 +123,15 @@ pub fn extract_bytes(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKin
         Format::Odt | Format::Odp => plain(odf::odf(bytes)),
         Format::Xlsx => plain(sheet::sheet(bytes, false)),
         Format::Ods => plain(sheet::sheet(bytes, true)),
-        Format::Txt => plain(Ok(text::txt(bytes))),
-        Format::Csv => plain(text::csv(bytes)),
+        // 큰 TXT·CSV 는 디코딩 전에 바이트를 잘라 워커 메모리(디코딩 복사본 여러 벌)도 묶는다.
+        Format::Txt | Format::Csv => {
+            let (head, cut) = text::cap_input(bytes);
+            let r = if format == Format::Txt { Ok(text::txt(head)) } else { text::csv(head) };
+            plain(r).map(|mut x| {
+                x.stats.truncated |= cut;
+                x
+            })
+        }
         Format::Pdf => pdf::pdf(bytes)
             .map(|(doc, stats)| Extracted { doc, distribution: false, stats })
             .map_err(|k| (k, magic::magic_hex(bytes))),

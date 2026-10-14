@@ -88,12 +88,19 @@ pub(crate) fn pdf(bytes: &[u8]) -> Result<(Document, Stats), FailKind> {
     let title = doc.metadata().get(PdfDocumentMetadataTagType::Title).and_then(|t| usable_title(t.value()));
     let mut stats = Stats::default();
     let mut blocks: Vec<Block> = Vec::new();
+    // 글자가 `MAX_DOC_CHARS` 를 채우면 남은 쪽은 읽지 않는다(extract_bytes 가 정확히 자른다). pdf_pages 는 읽은 쪽 수.
+    let mut chars = 0usize;
     for page in doc.pages().iter() {
+        if chars >= crate::MAX_DOC_CHARS {
+            stats.truncated = true;
+            break;
+        }
         stats.pdf_pages += 1;
         let text = page.text().map(|t| t.all()).unwrap_or_default();
         if page_ok(&quality(&text)) {
             let t = clean_lines(&text.replace("\r\n", "\n"));
             if !t.is_empty() {
+                chars += t.chars().count();
                 blocks.push(Block { kind: BlockKind::Paragraph, text: t });
                 continue;
             }

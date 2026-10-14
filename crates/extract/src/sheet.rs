@@ -16,7 +16,7 @@ pub(crate) const MAX_ROWS_PER_SHEET: usize = 50_000;
 const MAX_CELLS_PER_SHEET: usize = 1_000_000;
 /// 표로 펼친 칸 수(빈 칸 포함) 상한 — 한 시트 기준. 넘는 행부터는 버린다.
 const MAX_SLOTS_PER_SHEET: usize = 2_000_000;
-/// ODS: calamine 이 펼칠 칸 수 어림의 상한(문서 전체). 넘으면 TooLarge(파일명만 색인).
+/// ODS: calamine 이 펼칠 칸 수 어림의 상한(문서 전체). 넘으면 TooComplex(파일명만 색인).
 const ODS_MAX_CELLS: u64 = 2_000_000;
 /// 셀 글자 바이트 합 상한(문서 전체). 같은 긴 글자가 여러 칸에 복제돼도(공유 문자열·ODS 반복) 메모리가 곱해지지 않게(DEC-036).
 const MAX_SHEET_TEXT_BYTES: u64 = 64 * 1024 * 1024;
@@ -62,11 +62,11 @@ fn check_parts(bytes: &[u8], part_cap: u64, total_cap: u64) -> Result<(), FailKi
         }
         let n = std::io::copy(&mut (&mut f).take(part_cap + 1), &mut std::io::sink()).map_err(|_| FailKind::Corrupt)?;
         if n > part_cap {
-            return Err(FailKind::TooLarge);
+            return Err(FailKind::TooComplex);
         }
         total += n;
         if total > total_cap {
-            return Err(FailKind::TooLarge);
+            return Err(FailKind::TooComplex);
         }
     }
     Ok(())
@@ -129,7 +129,7 @@ fn xlsx_sheets(bytes: &[u8], out: &mut Vec<Block>) -> Result<(), FailKind> {
             }
             text_bytes += v.len() as u64;
             if text_bytes > MAX_SHEET_TEXT_BYTES {
-                return Err(FailKind::TooLarge);
+                return Err(FailKind::TooComplex);
             }
             cells.push((r, col, v));
             if cells.len() >= MAX_CELLS_PER_SHEET {
@@ -151,7 +151,7 @@ fn xlsx_sheets(bytes: &[u8], out: &mut Vec<Block>) -> Result<(), FailKind> {
 ///
 /// 비지 않은 칸 = 병합·반복·스타일 말고 다른 속성(value-type·value·string-value·formula 등)이 있거나 안에 내용이 있는(시작 태그) 칸.
 /// calamine 은 value-type 없이 office:value 만 있어도 값으로 읽으므로 넉넉하게(많게) 센다.
-/// 글자 바이트도 어림한다: Σ (칸 내용 바이트 × 열 반복 × 행 반복) 이 MAX_SHEET_TEXT_BYTES 를 넘으면 TooLarge.
+/// 글자 바이트도 어림한다: Σ (칸 내용 바이트 × 열 반복 × 행 반복) 이 MAX_SHEET_TEXT_BYTES 를 넘으면 TooComplex.
 fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
     /// 반복 속성(없으면 1, 0·잘못된 값도 1).
     fn num(e: &quick_xml::events::BytesStart, a: &str) -> u64 {
@@ -220,7 +220,7 @@ fn ods_cell_estimate(bytes: &[u8]) -> Result<u64, FailKind> {
                     _ => {}
                 }
                 if total > ODS_MAX_CELLS || total_bytes > MAX_SHEET_TEXT_BYTES {
-                    return Err(FailKind::TooLarge);
+                    return Err(FailKind::TooComplex);
                 }
                 continue;
             }
@@ -281,7 +281,7 @@ pub(crate) fn sheet(bytes: &[u8], ods: bool) -> Result<Document, FailKind> {
     let mut out = Vec::new();
     if ods {
         if ods_cell_estimate(bytes)? > ODS_MAX_CELLS {
-            return Err(FailKind::TooLarge);
+            return Err(FailKind::TooComplex);
         }
         let mut wb: Ods<_> = open_workbook_from_rs(Cursor::new(bytes)).map_err(|_| FailKind::Corrupt)?;
         for name in wb.sheet_names() {
@@ -341,12 +341,12 @@ mod tests {
 
     #[test]
     fn non_empty_repeated_rows_are_refused_quickly() {
-        // 비지 않은 행(10칸 "x")이 100만 번 반복 → calamine 이 1,000만 칸을 펼칠 파일. 펼치기 전에 TooLarge.
+        // 비지 않은 행(10칸 "x")이 100만 번 반복 → calamine 이 1,000만 칸을 펼칠 파일. 펼치기 전에 TooComplex.
         let bytes = ods_with(
             r#"<table:table-row table:number-rows-repeated="1000000"><table:table-cell table:number-columns-repeated="10" office:value-type="string"><text:p>x</text:p></table:table-cell></table:table-row>"#,
         );
         let t = Instant::now();
-        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooLarge));
+        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooComplex));
         assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
     }
 
@@ -389,24 +389,24 @@ mod tests {
             r#"<table:table-row table:number-rows-repeated="1000"><table:table-cell office:value="1" table:number-columns-repeated="16384"/></table:table-row>"#,
         );
         let t = Instant::now();
-        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooLarge));
+        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooComplex));
         assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
     }
 
     #[test]
-    fn long_repeated_ods_cell_is_too_large_by_bytes() {
+    fn long_repeated_ods_cell_is_too_complex_by_bytes() {
         // 100KB 글자 × 1000열 × 1000행 = 100만 칸(칸 수 상한 안)이지만 100GB.
         let long = "가".repeat(33_000);
         let bytes = ods_with(&format!(
             r#"<table:table-row table:number-rows-repeated="1000"><table:table-cell table:number-columns-repeated="1000" office:value-type="string"><text:p>{long}</text:p></table:table-cell></table:table-row>"#
         ));
         let t = Instant::now();
-        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooLarge));
+        assert_eq!(sheet(&bytes, true).err(), Some(FailKind::TooComplex));
         assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
     }
 
     #[test]
-    fn shared_string_referenced_by_many_cells_is_too_large() {
+    fn shared_string_referenced_by_many_cells_is_too_complex() {
         // 1MB 공유 문자열을 100칸이 가리킨다 → 복제하면 100MB.
         let rels = r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
         let wb = r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="시트" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
@@ -427,15 +427,15 @@ mod tests {
             ("xl/worksheets/sheet1.xml", ws.as_bytes()),
         ]);
         let t = Instant::now();
-        assert_eq!(sheet(&bytes, false).err(), Some(FailKind::TooLarge));
+        assert_eq!(sheet(&bytes, false).err(), Some(FailKind::TooComplex));
         assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
     }
 
     #[test]
-    fn lying_or_large_xml_part_is_too_large() {
+    fn lying_or_large_xml_part_is_too_complex() {
         let bytes = zip_of(&[("xl/sharedStrings.xml", &[b'a'; 2048]), ("xl/media/image1.png", &[0u8; 4096])]);
-        assert_eq!(check_parts(&bytes, 1024, 1 << 20), Err(FailKind::TooLarge));
-        assert_eq!(check_parts(&bytes, 4096, 1024), Err(FailKind::TooLarge)); // 합계 상한
+        assert_eq!(check_parts(&bytes, 1024, 1 << 20), Err(FailKind::TooComplex));
+        assert_eq!(check_parts(&bytes, 4096, 1024), Err(FailKind::TooComplex)); // 합계 상한
         assert_eq!(check_parts(&bytes, 4096, 1 << 20), Ok(())); // 그림 파트는 세지 않는다
     }
 

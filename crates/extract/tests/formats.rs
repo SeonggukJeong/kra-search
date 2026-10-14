@@ -66,6 +66,7 @@ fn fail_kind_codes_are_stable() {
         (FailKind::NotContainer, "NotContainer"),
         (FailKind::Unsupported, "Unsupported"),
         (FailKind::TooLarge, "TooLarge"),
+        (FailKind::TooComplex, "TooComplex"),
         (FailKind::NoText, "NoText"),
         (FailKind::Unreadable, "Unreadable"),
     ];
@@ -286,6 +287,35 @@ fn stray_nul_does_not_turn_utf8_into_utf16() {
     let (_, b) = blocks(extract_one(&p));
     assert_eq!(b.len(), 1, "{b:?}");
     assert!(b[0].1.contains("한국마사회 경마 시행 계획 보고"), "{b:?}");
+}
+
+fn ok_doc(o: Outcome) -> (doc::Document, extract::Stats) {
+    match o {
+        Outcome::Ok { doc, stats, .. } => (doc, stats),
+        o => panic!("{o:?}"),
+    }
+}
+
+fn doc_chars(d: &doc::Document) -> usize {
+    d.blocks.iter().map(|b| b.text.chars().count()).sum()
+}
+
+/// 아주 큰 TXT: 워커 밖으로 내보내는 글자는 MAX_DOC_CHARS 이하, 잘림 표시가 켜진다(I1 — 90MB TXT 가 앱 743MB·meta 97MB).
+/// ① 약 30MB 한글(디코딩 전 바이트 상한을 넘음) ② 15MB 영문(바이트 상한 안이지만 글자 1,500만 개 — 공통 글자 상한이 자른다).
+#[test]
+fn huge_txt_is_capped_and_marked_truncated() {
+    let ko = "한국마사회 경마 시행 계획 보고 문서 본문 줄입니다\n".repeat(30 * 1024 * 1024 / 75);
+    let en = "plain ascii log line number\n".repeat(15 * 1024 * 1024 / 28);
+    for (name, body) in [("큰한글.txt", ko), ("큰로그.txt", en)] {
+        let (_d, p) = temp_file(name, body.as_bytes());
+        drop(body);
+        let (d, stats) = ok_doc(extract_one(&p));
+        let n = doc_chars(&d);
+        assert!(n <= extract::MAX_DOC_CHARS && n > extract::MAX_DOC_CHARS - 100, "{name}: {n}");
+        assert!(stats.truncated, "{name}");
+    }
+    let (_d, p) = temp_file("작은.txt", "짧은 문서".as_bytes());
+    assert!(!ok_doc(extract_one(&p)).1.truncated);
 }
 
 #[test]

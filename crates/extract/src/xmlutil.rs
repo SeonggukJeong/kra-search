@@ -16,7 +16,7 @@ pub(crate) fn open_zip(bytes: &[u8]) -> Result<Zip<'_>, FailKind> {
     zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| FailKind::Corrupt)
 }
 
-/// zip 안의 파트를 UTF-8 문자열로 읽는다. 없으면 None, MAX_PART 를 넘으면 TooLarge.
+/// zip 안의 파트를 UTF-8 문자열로 읽는다. 없으면 None, MAX_PART 를 넘으면 TooComplex(파일 100MB 상한과 구별).
 pub(crate) fn read_part(zip: &mut Zip, name: &str) -> Result<Option<String>, FailKind> {
     read_part_capped(zip, name, MAX_PART)
 }
@@ -30,7 +30,7 @@ pub(crate) fn read_part_capped(zip: &mut Zip, name: &str, cap: u64) -> Result<Op
     let mut buf = Vec::new();
     file.take(cap + 1).read_to_end(&mut buf).map_err(|_| FailKind::Corrupt)?;
     if buf.len() as u64 > cap {
-        return Err(FailKind::TooLarge);
+        return Err(FailKind::TooComplex);
     }
     let s = String::from_utf8(buf).map_err(|_| FailKind::Corrupt)?;
     Ok(Some(s.strip_prefix('\u{FEFF}').map(str::to_owned).unwrap_or(s)))
@@ -98,7 +98,7 @@ mod tests {
         w.write_all(&vec![b'a'; 2048]).unwrap();
         let bytes = w.finish().unwrap().into_inner();
         let mut z = open_zip(&bytes).unwrap();
-        assert_eq!(read_part_capped(&mut z, "big.xml", 1024), Err(FailKind::TooLarge));
+        assert_eq!(read_part_capped(&mut z, "big.xml", 1024), Err(FailKind::TooComplex));
         assert_eq!(read_part_capped(&mut z, "big.xml", 4096).unwrap().map(|s| s.len()), Some(2048));
         assert_eq!(read_part_capped(&mut z, "없음.xml", 4096), Ok(None));
     }

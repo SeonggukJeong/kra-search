@@ -194,6 +194,8 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
         timeout: x.timeout,
         crashed: x.crashed,
         too_large: x.too_large,
+        too_complex: x.too_complex,
+        truncated: x.truncated,
         no_text: x.no_text,
         unreadable: x.unreadable,
         found: x.found,
@@ -271,6 +273,7 @@ pub fn run_with(
         match extract(f, measure) {
             Outcome::Ok { doc, distribution, coverage, stats } => {
                 fc.ok += 1;
+                a.x.truncated += stats.truncated as usize;
                 a.x.pdf_pages += stats.pdf_pages as u64;
                 a.x.pdf_bad_pages += stats.pdf_bad_pages as u64;
                 if stats.article_numbered_paras > 0 {
@@ -314,6 +317,7 @@ pub fn run_with(
                 FailKind::Corrupt => a.x.corrupt += 1,
                 FailKind::Unsupported => a.x.unsupported += 1,
                 FailKind::TooLarge => a.x.too_large += 1,
+                FailKind::TooComplex => a.x.too_complex += 1,
                 FailKind::NoText => a.x.no_text += 1,
                 FailKind::Unreadable => a.x.unreadable += 1,
                 FailKind::NotContainer => {
@@ -327,7 +331,7 @@ pub fn run_with(
                 a.x.timeout += 1;
             }
             Outcome::Crashed { .. } => {
-                fc.timeout += 1;
+                fc.crashed += 1;
                 a.x.crashed += 1;
             }
         }
@@ -420,6 +424,33 @@ mod tests {
         for e in ["txt", "hwp", "pdf"] {
             assert!(head.contains(&e), "앞 6개에 {e} 없음: {head:?}");
         }
+    }
+
+    /// 비정상 종료는 형식별 crashed, 시간 초과는 timeout, 내부 상한은 too_complex, 잘린 문서는 truncated 로 따로 센다.
+    #[test]
+    fn crash_timeout_too_complex_and_truncated_are_counted_apart() {
+        use extract::runner::Outcome;
+        use extract::FailKind;
+        let dir = tempfile::tempdir().unwrap();
+        for n in ["crash", "hang", "complex", "big", "large"] {
+            std::fs::write(dir.path().join(format!("{n}.ods")), n).unwrap();
+        }
+        let fake = |p: &std::path::Path, _: bool| match std::fs::read_to_string(p).unwrap().as_str() {
+            "crash" => Outcome::Crashed { code: Some(3) },
+            "hang" => Outcome::Timeout,
+            "complex" => Outcome::Failed { kind: FailKind::TooComplex, magic: String::new() },
+            "large" => Outcome::Failed { kind: FailKind::TooLarge, magic: String::new() },
+            _ => Outcome::Ok {
+                doc: doc::Document::default(),
+                distribution: false,
+                coverage: None,
+                stats: extract::Stats { truncated: true, ..Default::default() },
+            },
+        };
+        let x = super::run_with(&[dir.path().to_path_buf()], None, &fake, 0, &mut |_| {});
+        let f = &x.by_format[0];
+        assert_eq!((f.ext.as_str(), f.timeout, f.crashed, f.other_fail, f.ok), ("ods", 1, 1, 2, 1));
+        assert_eq!((x.timeout, x.crashed, x.too_complex, x.too_large, x.truncated), (1, 1, 1, 1, 1));
     }
 
     #[test]
