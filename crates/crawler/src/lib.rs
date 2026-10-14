@@ -89,12 +89,22 @@ pub fn scan(roots: &[PathBuf], opt: &ScanOptions) -> ScanReport {
         }
         // 제외 접두어(%TEMP% 등)는 루트의 진짜 하위일 때만 쓴다 — 사용자가 그 안을 루트로 고르면 그대로 훑는다.
         let prefixes: Vec<&PathBuf> = opt.excluded_prefixes.iter().filter(|p| p.starts_with(root) && p.as_path() != root.as_path()).collect();
+        // 클라우드 자리표시자 폴더(일부만 내려받은 OneDrive 폴더 등)는 들어가지 않는다 — 열거도 내려받기를 일으킬 수 있다(kra-diag 와 같은 규칙).
+        // 그 아래 아는 파일을 지운 것으로 보지 않도록 경로를 errored 에 남긴다. 클라우드가 아닌 OS 에서는 아무 일도 하지 않는다.
+        let mut cloud_dirs: Vec<PathBuf> = Vec::new();
         let walker = WalkDir::new(root).follow_links(false).into_iter().filter_entry(|e| {
             if e.depth() == 0 || !e.file_type().is_dir() {
                 return true;
             }
             let name_ok = e.file_name().to_str().is_none_or(|n| !excluded.contains(&n.to_lowercase()));
-            name_ok && !prefixes.iter().any(|p| e.path().starts_with(p))
+            if !name_ok || prefixes.iter().any(|p| e.path().starts_with(p)) {
+                return false;
+            }
+            if e.metadata().is_ok_and(|m| cloud_only(&m)) {
+                cloud_dirs.push(e.path().to_path_buf());
+                return false;
+            }
+            true
         });
         for entry in walker {
             let e = match entry {
@@ -127,6 +137,8 @@ pub fn scan(roots: &[PathBuf], opt: &ScanOptions) -> ScanReport {
                 }
             }
         }
+        r.cloud_only += cloud_dirs.len();
+        r.errored.extend(cloud_dirs);
     }
     r
 }
@@ -303,6 +315,30 @@ mod tests {
         let r = scan(&[d.path().to_path_buf()], &opts());
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(r.errored.iter().any(|p| p == &locked), "{:?}", r.errored);
+        let df = diff(&r.files, &known, &r.keep_under());
+        assert!(df.removed.is_empty(), "{:?}", df.removed);
+    }
+
+    /// 클라우드 자리표시자 폴더(OFFLINE 속성)는 들어가지 않고, 그 아래 아는 파일을 지운 것으로 보지 않는다.
+    /// `attrib +O` 는 속성만 바꾼다(내려받기·네트워크 없음).
+    #[cfg(windows)]
+    #[test]
+    fn cloud_placeholder_folder_is_skipped_not_deleted() {
+        let d = tempfile::tempdir().unwrap();
+        touch(&d.path().join("ok.txt"), b"x");
+        let cloud = d.path().join("원드라이브");
+        touch(&cloud.join("온라인.txt"), b"y");
+        let first = scan(&[d.path().to_path_buf()], &opts());
+        assert_eq!(first.files.len(), 2);
+        let known: HashMap<String, (u64, i64)> = first.files.iter().map(|s| (s.path.clone(), (s.size, s.mtime_ns))).collect();
+        let _ = std::process::Command::new("attrib").arg("+O").arg(&cloud).status();
+        // attrib 은 실패해도 0 을 돌려줄 수 있다 — 속성이 실제로 켜졌는지 확인한다.
+        assert!(std::fs::symlink_metadata(&cloud).is_ok_and(|m| cloud_only(&m)), "시험 전제: OFFLINE 속성");
+        let r = scan(&[d.path().to_path_buf()], &opts());
+        let _ = std::process::Command::new("attrib").arg("-O").arg(&cloud).status();
+        assert_eq!(names(&r), vec!["ok.txt"]);
+        assert_eq!(r.cloud_only, 1);
+        assert!(r.errored.iter().any(|p| p == &cloud), "{:?}", r.errored);
         let df = diff(&r.files, &known, &r.keep_under());
         assert!(df.removed.is_empty(), "{:?}", df.removed);
     }
