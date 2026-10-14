@@ -310,3 +310,81 @@ fn bomless_utf16le_korean_prose_with_u_xx00_syllables() {
     let (_, b) = blocks(extract_one(&p));
     assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, text.trim())]);
 }
+
+/// 이 호스트의 pdfium(tools/fetch-pdfium.sh 가 받은 것)을 한 번 불러온다.
+fn pdfium() {
+    let plat = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "mac-arm64/lib",
+        ("macos", "x86_64") => "mac-x64/lib",
+        ("windows", "x86_64") => "win-x64/bin",
+        ("linux", "x86_64") => "linux-x64/lib",
+        other => panic!("pdfium 플랫폼 없음: {other:?}"),
+    };
+    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/pdfium").join(plat).join(extract::pdf::LIB_NAME);
+    assert!(lib.exists(), "먼저 `bash tools/fetch-pdfium.sh` 실행: {}", lib.display());
+    // canonicalize 는 Windows 에서 `\\?\C:\…` 꼴을 돌려준다 — absolute 는 그 접두어 없이 절대 경로만 만든다.
+    extract::pdf::init(&std::path::absolute(&lib).unwrap()).unwrap();
+}
+
+fn pdf_fx(name: &str) -> PathBuf {
+    fx(&format!("pdf/{name}"))
+}
+
+#[test]
+fn pdf_korean_pages_and_title() {
+    pdfium();
+    match extract_one(&pdf_fx("korean.pdf")) {
+        Outcome::Ok { doc, stats, .. } => {
+            assert_eq!(doc.title.as_deref(), Some("마사회 검색 시험"));
+            assert_eq!((stats.pdf_pages, stats.pdf_bad_pages), (2, 0));
+            assert_eq!(doc.blocks.len(), 2);
+            assert!(doc.blocks[0].text.contains("렛츠런파크 서울 운영 방안"), "{:?}", doc.blocks);
+            assert!(doc.blocks[1].text.contains("1,234백만원"), "{:?}", doc.blocks);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn pdf_garbled_and_image_only_are_no_text() {
+    pdfium();
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("garbled.pdf"))), Some(FailKind::NoText));
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("image_only.pdf"))), Some(FailKind::NoText));
+}
+
+#[test]
+fn pdf_bad_pages_are_dropped_and_counted() {
+    pdfium();
+    match extract_one(&pdf_fx("mixed.pdf")) {
+        Outcome::Ok { doc, stats, .. } => {
+            assert_eq!((stats.pdf_pages, stats.pdf_bad_pages), (2, 1));
+            assert_eq!(doc.blocks.len(), 1);
+            assert!(!doc.blocks[0].text.contains('Ä'));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn pdf_password_is_encrypted() {
+    pdfium();
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("encrypted.pdf"))), Some(FailKind::Encrypted));
+}
+
+#[test]
+fn pdf_init_is_safe_from_many_threads() {
+    // 시험들이 병렬로 처음 init 을 부르면 pdfium-render 가 "이미 바인딩됨" 오류를 낼 수 있었다(리뷰 지적) → 직렬화 확인.
+    let hs: Vec<_> = (0..8).map(|_| std::thread::spawn(pdfium)).collect();
+    for h in hs {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn pdf_placeholder_title_is_ignored() {
+    pdfium();
+    match extract_one(&pdf_fx("no_title.pdf")) {
+        Outcome::Ok { doc, .. } => assert_eq!(doc.title, None),
+        other => panic!("{other:?}"),
+    }
+}

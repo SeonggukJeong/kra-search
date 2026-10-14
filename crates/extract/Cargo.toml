@@ -15,6 +15,9 @@ chardetng = "1.0.0"
 encoding_rs = "0.8.42"
 csv = "1.4.0"
 calamine = { version = "0.36.1", default-features = false }
+# 동적 로드(실행 파일 옆 DLL 을 절대 경로로) — `static`·`bindings`·`pdfium_use_win32` 기능은 켜지 않는다.
+# 기본 기능을 끄면 image 크레이트가 빠진다. thread_safe 는 Pdfium 이 Send 가 되려면 필요(병렬 처리는 하지 않는다).
+pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_7881", "thread_safe"] }
 rhwp = { path = "../../third_party/rhwp", default-features = false }
 
 [dev-dependencies]

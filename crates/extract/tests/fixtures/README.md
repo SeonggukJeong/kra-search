@@ -29,3 +29,6 @@ rhwp 저장소(https://github.com/edwardkim/rhwp, MIT, rev 1a76570) `samples/`�
 `tools/fixtures/make_office.py` 로 만든 합성 문서(표준 라이브러리 zipfile, 내용은 모두 지어낸 것).
 다시 만들 때: `python3 -I tools/fixtures/make_office.py crates/extract/tests/fixtures/office` — ZIP 시각을 고정해 같은 바이트가 나온다.
 `encrypted.odt` 는 암호 ODF 의 겉모양(manifest 의 encryption-data + 가짜 암호문)만 흉내 낸 것으로, 실제 암호로는 열리지 않는다.
+
+## PDF (`pdf/`)
+`tools/fixtures/make_pdf.py`(reportlab 5.0.1) 로 만든 합성 문서. 글꼴을 임베드하지 않는다 — 한글은 비임베드 CID 글꼴 HYGothic-Medium, "깨진 글자"는 Helvetica 로 Latin-1 문자를 찍어 흉내 냈다. `encrypted.pdf` 는 사용자 암호 `pw`(열 때 암호 필요).

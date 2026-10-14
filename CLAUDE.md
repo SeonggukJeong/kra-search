@@ -29,6 +29,7 @@
 ## 개발 명령
 ```bash
 bash tools/fetch-rhwp.sh          # rhwp 소스(third_party/rhwp)
+bash tools/fetch-pdfium.sh        # PDF 추출 엔진(third_party/pdfium, 시험에 필요)
 bash tools/fetch-models.sh        # 개발용 GGUF(models/)
 cargo test --workspace --release
 cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1

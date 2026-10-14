@@ -14,6 +14,9 @@ jobs:
       - name: fetch rhwp sources
         shell: bash
         run: bash tools/fetch-rhwp.sh
+      - name: fetch pdfium (pinned, SHA-256)
+        shell: bash
+        run: bash tools/fetch-pdfium.sh
       - name: libclang (windows)
         if: runner.os == 'Windows'
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
