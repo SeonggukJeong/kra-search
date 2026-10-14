@@ -251,3 +251,46 @@ fn huge_repeated_rows_are_cheap() {
         kt(TableRow, "구분: 시설 | 금액: 0.5"),
     ]);
 }
+
+#[test]
+fn txt_encodings_are_detected() {
+    let ko = "한국마사회 경마 시행 계획\n렛츠런파크 서울 운영 방안을 보고합니다.";
+    for f in ["utf8.txt", "utf8_bom.txt", "cp949.txt", "utf16le_bom.txt", "utf16be_bom.txt", "utf16le_nobom.txt"] {
+        let (_, b) = blocks(extract_one(&office(f)));
+        assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, ko)], "{f}");
+    }
+    assert_eq!(blocks(extract_one(&office("cp949_short.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "회의록")]);
+    assert_eq!(blocks(extract_one(&office("cp949_ext.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "똠방각하 펲뷁 샾")]);
+    assert_eq!(blocks(extract_one(&office("ascii.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "plain ascii only")]);
+}
+
+#[test]
+fn csv_quotes_and_multiline_cells() {
+    use doc::BlockKind::*;
+    let (_, b) = blocks(extract_one(&office("cp949.csv")));
+    assert_eq!(b, vec![
+        kt(TableHeader, "구분 | 금액 | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 금액: 1,200 | 비고: 따옴표 \"안\" 글"),
+        kt(TableRow, "구분: 시설 개선 | 금액: 300"),
+        kt(TableRow, "구분: 여러 줄 칸 | 금액: 5 | 비고: 끝"),
+    ]);
+}
+
+#[test]
+fn stray_nul_does_not_turn_utf8_into_utf16() {
+    // 짝수 길이 UTF-8 한글 + NUL 하나 — "NUL 이 있으면 UTF-16" 규칙이면 깨진 한자로 풀린다(리뷰에서 재현).
+    let mut bytes = "한국마사회 경마 시행 계획 보고".as_bytes().to_vec();
+    bytes.push(0);
+    assert_eq!(bytes.len() % 2, 0);
+    let (_d, p) = temp_file("nul.txt", &bytes);
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b.len(), 1, "{b:?}");
+    assert!(b[0].1.contains("한국마사회 경마 시행 계획 보고"), "{b:?}");
+}
+
+#[test]
+fn blank_lines_split_txt_paragraphs() {
+    let (_d, p) = temp_file("메모.txt", "첫 문단 첫 줄\n첫 문단 둘째 줄\n\n\n둘째 문단".as_bytes());
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, "첫 문단 첫 줄\n첫 문단 둘째 줄"), kt(doc::BlockKind::Paragraph, "둘째 문단")]);
+}

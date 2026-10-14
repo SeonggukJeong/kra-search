@@ -11,6 +11,7 @@ pub(crate) mod table;
 mod odf;
 mod ooxml;
 mod sheet;
+mod text;
 mod walk;
 pub(crate) mod xmlutil;
 
@@ -100,6 +101,8 @@ pub fn extract_bytes(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKin
         Format::Odt | Format::Odp => plain(odf::odf(bytes)),
         Format::Xlsx => plain(sheet::sheet(bytes, false)),
         Format::Ods => plain(sheet::sheet(bytes, true)),
+        Format::Txt => plain(Ok(text::txt(bytes))),
+        Format::Csv => plain(text::csv(bytes)),
         // 나머지 형식은 이후 Task 에서 채운다.
         _ => Err((FailKind::Unsupported, String::new())),
     }
