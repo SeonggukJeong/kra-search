@@ -7,22 +7,35 @@ use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use doc::{BlockKind, Document};
 use encoding_rs::Encoding;
 
+/// BOM 없는 UTF-16 판정: NUL 이 몰린 쪽이 전체 코드 단위의 이 비율(%) 이상
+const UTF16_MAJOR_MIN_PERCENT: usize = 10;
+/// 반대쪽 NUL 수 × 이 값 ≤ 몰린 쪽 NUL 수
+const UTF16_MINOR_MAX_RATIO_INV: usize = 4;
+
 /// 바이트 → 문자열. 실패해도 대체 문자(U+FFFD)로 채워 돌려준다.
 pub(crate) fn decode(bytes: &[u8]) -> String {
     // 1) BOM(UTF-8 / UTF-16LE / UTF-16BE)
     if let Some((enc, bom_len)) = Encoding::for_bom(bytes) {
         return enc.decode_without_bom_handling(&bytes[bom_len..]).0.into_owned();
     }
-    // 2) BOM 없는 UTF-16: ASCII(공백·숫자·줄바꿈)의 상위 바이트가 0 이라 **한쪽 자리(짝/홀)에만** NUL 이 몰린다.
-    //    그 비율로 판정한다 — 한쪽 ≥ 10%, 다른 쪽 ≤ 2%. NUL 하나 섞인 UTF-8 은 비율이 낮아 여기서 걸리지 않는다
+    // 2) BOM 없는 UTF-16: ASCII(공백·숫자·줄바꿈)의 상위 바이트가 0 이라 **한쪽 자리(짝/홀)에 NUL 이 몰린다**(major).
+    //    반대쪽(minor)에도 NUL 이 조금 있다 — 가(AC00)·글(AE00)·대(B300) 같은 U+xx00 음절은 낮은 바이트가 0 이다
+    //    (실제 한국어 문장에서 minor 2~3%, major 30% 대). 그래서 minor 는 절대 비율이 아니라 major 대비로 본다:
+    //    major ≥ 10%(UTF16_MAJOR_MIN_PERCENT) 이고 minor × 4 ≤ major(UTF16_MINOR_MAX_RATIO 의 역수).
+    //    NUL 하나 섞인 UTF-8·CP949 는 양쪽 다 0% 근처라 major 문턱에서 걸러진다
     //    (UTF-8 한글을 UTF-16 으로 풀면 오류 없이 깨진 한자가 나오므로 had_errors 로는 못 거른다 — 리뷰에서 재현).
     //    ASCII 만 든 UTF-16 은 올바른 UTF-8 이기도 해서 UTF-8 검사보다 먼저 한다.
     //    공백·숫자 없이 한글만 있는 UTF-16 은 NUL 이 거의 없어 못 잡는다 — 메모장은 항상 BOM 을 쓴다.
+    //    빅엔디언은 짝/홀이 뒤바뀐 대칭이다.
     let units = bytes.len() / 2;
     let zeros_even = bytes.iter().step_by(2).filter(|&&b| b == 0).count();
     let zeros_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
     let (major, minor) = (zeros_even.max(zeros_odd), zeros_even.min(zeros_odd));
-    if bytes.len().is_multiple_of(2) && units > 0 && major * 10 >= units && minor * 50 <= units {
+    if bytes.len().is_multiple_of(2)
+        && units > 0
+        && major * 100 >= units * UTF16_MAJOR_MIN_PERCENT
+        && minor * UTF16_MINOR_MAX_RATIO_INV <= major
+    {
         let enc = if zeros_odd >= zeros_even { encoding_rs::UTF_16LE } else { encoding_rs::UTF_16BE };
         let (s, had_errors) = enc.decode_without_bom_handling(bytes);
         if !had_errors {

@@ -294,3 +294,19 @@ fn blank_lines_split_txt_paragraphs() {
     let (_, b) = blocks(extract_one(&p));
     assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, "첫 문단 첫 줄\n첫 문단 둘째 줄"), kt(doc::BlockKind::Paragraph, "둘째 문단")]);
 }
+
+#[test]
+fn bomless_utf16le_korean_prose_with_u_xx00_syllables() {
+    // 가(AC00)·대(B300)·글(AE00) 은 UTF-16LE 낮은 바이트가 0 이라 "짝수 자리" 쪽에도 NUL 이 생긴다(실제 한국어 문장 2~3%).
+    let text = "가을 대회 글짓기 안내문을 보내드립니다 경마 시행 계획과 렛츠런파크 운영 방안을 함께 보고합니다 ";
+    let text = text.repeat(6);
+    let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let units = bytes.len() / 2;
+    let zeros_even = bytes.iter().step_by(2).filter(|&&b| b == 0).count();
+    let zeros_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+    assert!(zeros_even * 50 > units && zeros_even * 10 < units, "minor {zeros_even}/{units} 가 2%~10% 구간이어야 한다");
+    assert!(zeros_odd * 10 >= units, "major {zeros_odd}/{units}");
+    let (_d, p) = temp_file("utf16.txt", &bytes);
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, text.trim())]);
+}
