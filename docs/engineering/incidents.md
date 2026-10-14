@@ -20,6 +20,7 @@
 | [INC-013](#inc-013) | 백엔드 개수 검사가 지연 로드 환경의 시험을 깨뜨림 | embed | backend_dir 있을 때만 검사 |
 | [INC-014](#inc-014) | 평가 캐시가 추출 결과 변경을 무시(낡은 임베딩 재사용) | 평가 | `m0eval/src/cache.rs` 입력 해시 키 |
 | [INC-015](#inc-015) | CI가 메모리 회귀 시험을 돌리지 않음 | CI | ci.yml 실모델 단계에 `diag --test memory` |
+| [INC-016](#inc-016) | Windows CI 에서 `fetch-pdfium.sh` 의 curl 이 쓰기 실패(23) | CI·빌드 | 스크립트의 `native_path` + 주석, Windows CI |
 
 ---
 
@@ -143,3 +144,10 @@ CI 가 메모리 회귀 시험을 돌리지 않음 · 2026-10-13
 - **증상**: INC-004 의 메모리 시험(`diag/tests/memory.rs`)이 `#[ignore]`(모델 필요)인데 CI 실모델 단계는 `embed` 시험만 돌림 → 패치가 빠져도 CI 가 통과했을 것.
 - **고친 방법**: CI 실모델 단계에 `cargo test -p diag --release --test memory -- --include-ignored`. 모델 없이 도는 `llama-sys/tests/patches.rs` 도 추가.
 - **교훈**: `#[ignore]` 시험을 만들면 **어디서 돌리는지**를 같이 정한다.
+
+### INC-016
+Windows CI 에서 pdfium 내려받기 실패 · 2026-10-14
+- **증상**: `bash tools/fetch-pdfium.sh` 가 `curl: (23) client returned ERROR on write` 로 종료 → Windows 잡이 `cargo build` 전에 중단(macOS 는 통과).
+- **원인**: 스크립트가 `MSYS_NO_PATHCONV=1` 로 경로 변환을 껐는데 `curl -o` 에 MSYS 경로(`/d/a/...`)를 그대로 줘서, 네이티브 `curl.exe` 가 현재 드라이브의 `\d\a\...`(없는 폴더)에 쓰려다 실패.
+- **고친 방법**: curl 에 넘기는 경로만 `cygpath -m`(`native_path`)으로 변환. tar·mv·rm 은 MSYS 프로그램이라 그대로(tar 는 `D:/` 를 원격 호스트로 읽어 변환하면 오히려 깨짐). `fetch-rhwp.sh` 는 git·python 에 `cygpath -m` 경로를 이미 쓰고 있어 CI 에서 동작 — 그대로 둠.
+- **교훈**: 경로 변환을 끄면 네이티브 Windows 프로그램(curl·git·python)에 넘기는 경로를 직접 바꿔야 한다. Windows 전용 경로 문제는 macOS 에서 안 보이므로 새 스크립트는 Windows CI 에서 처음 돌려 본다.

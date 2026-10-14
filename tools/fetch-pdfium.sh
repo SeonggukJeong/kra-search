@@ -8,6 +8,10 @@ export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*"
 TAG="chromium/7881"   # pdfium-render 0.9.4 의 pdfium_7881 과 맞춤
 ROOT="${PDFIUM_DIR:-$(cd "$(dirname "$0")/.." && pwd)/third_party/pdfium}"
 
+# Windows: 경로 변환을 껐으므로 네이티브 프로그램(curl.exe)에는 D:/... 형식으로 넘긴다(INC-016).
+# tar·mv·rm 은 MSYS 프로그램이라 원래 경로를 그대로 쓴다(tar 는 "D:/" 를 원격 호스트로 읽는다).
+native_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else echo "$1"; fi; }
+
 sha_of() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
 
 asset_sha() {
@@ -47,7 +51,7 @@ fetch() {
   fi
   rm -rf "$dir"; mkdir -p "$dir"
   tgz="$dir/pdfium-$p.tgz"
-  curl -sSfL -o "$tgz.part" "https://github.com/bblanchon/pdfium-binaries/releases/download/$TAG/pdfium-$p.tgz"
+  curl -sSfL -o "$(native_path "$tgz.part")" "https://github.com/bblanchon/pdfium-binaries/releases/download/$TAG/pdfium-$p.tgz"
   mv "$tgz.part" "$tgz"
   got="$(sha_of "$tgz")"
   if [ "$got" != "$want" ]; then
