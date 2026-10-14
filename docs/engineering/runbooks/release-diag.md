@@ -4,6 +4,7 @@
 
 ## 절차
 1. `main`(또는 작업 브랜치) CI 가 macOS·Windows·deny 모두 통과했는지 확인.
+   - **다음 마일스톤 수치 대조**(INC-020): 다음 마일스톤이 이 결과로 정할 것(스펙 로드맵·known-issues 의 "계기" 열)을 적고, 보고서에 그 숫자가 실제 설정값(예: `BODY_CHUNK`)으로 나오는지 확인한다. 로컬에서 `kra-diag all --root <평가 문서> --models models --skip-flat` 로 요약을 직접 본다.
 2. 태그: `git tag m1-diag-N && git push origin m1-diag-N`(M0 은 `m0-diag-N`, 둘 다 트리거) → `.github/workflows/release-diag.yml` 이 Windows 에서 빌드·패키지·스모크 시험·프리릴리즈 생성.
    - zip 구성: `kra-diag.exe`, llama/ggml DLL(CPU 변형 전부), VC++ 런타임 3개(INC-005), `models/*.gguf`(Q4·Q8), `pdfium.dll`, `licenses/pdfium/`, `README-diag.txt`(원본 `docs/diag/README-diag.txt`). 수동 점검표는 동봉하지 않는다.
 3. **스모크 수치 확인**(사용자에게 넘기기 전 필수): 워크플로 로그의 `bench` 요약에서 Q4 초당 토큰이 2코어 러너 기준 약 380~580 범위인지. 수십 토큰이면 최적화 빠짐(INC-006) — 넘기지 말 것.

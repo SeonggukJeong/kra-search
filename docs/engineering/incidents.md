@@ -24,6 +24,7 @@
 | [INC-017](#inc-017) | 큰 문서·상주 워커가 색인 메모리를 키움(90MB TXT 앱 743MB, 워커 누적 490MB) | extract·app | `extract/tests/formats.rs`·`app/tests/pipeline.rs` 큰 TXT 시험, `extract/tests/worker.rs` 재활용 시험, app 의 컴파일 때 상한 일치 확인 |
 | [INC-018](#inc-018) | pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" | app | `app/tests/cli.rs` `pdf_is_skipped_without_pdfium_and_read_later` |
 | [INC-019](#inc-019) | 실패 분류 섞임: 내부 상한이 "100MB 넘는 파일", 진단의 비정상 종료가 시간 초과로 | extract·app·diag | `FailKind::TooComplex` + 코드 고정 시험, `app` 안내 시험, `diag` 집계 시험 |
+| [INC-020](#inc-020) | m1-diag-1 이 M2 에 필요한 수치를 못 냄(청크 400 기준·전체 추정 없음) | diag | `embed::chunk::BODY_CHUNK` 공유 상수, 요약 시험, 릴리즈 전 "다음 마일스톤 수치" 점검(런북 1단계) |
 
 ---
 
@@ -178,3 +179,11 @@ pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" · 2026-10
 - **고친 방법**: `FailKind::TooComplex`(코드 "TooComplex", 화면 "내용이 너무 많은 문서") 추가 — `TooLarge` 는 `MAX_FILE_BYTES` 에만. 진단은 `too_complex`·`truncated`(전체)와 `crashed`(형식별)를 따로 세고 요약에도 따로 보인다(DEC-036 (6)).
 - **재발 방지 장치**: `extract/tests/formats.rs` `fail_kind_codes_are_stable`, `extract` 의 sheet·xmlutil 단위 시험(내부 상한 → TooComplex), `app/src/search.rs` `too_complex_is_not_shown_as_too_large`, `diag/src/extract_stats.rs` `crash_timeout_too_complex_and_truncated_are_counted_apart`, `diag/src/report.rs` 요약 시험, `diag/tests/report.rs` 새 항목 확인.
 - **교훈**: 사용자에게 보이는 실패 안내와 진단 집계는 원인이 다르면 칸도 다르게 둔다 — 하나로 묶으면 안내가 틀리고 현장 숫자를 해석할 수 없다.
+
+### INC-020
+진단 릴리즈가 다음 마일스톤에 쓸 수치를 못 냄 · 2026-10-15 (m1-diag-1 태그 직후, 폐쇄망 반입 전)
+- **증상**: m1-diag-1 의 본문 청크 통계와 임베딩 속도 벤치가 400토큰 청크 기준이었다 — M0 가 정한 크기는 300(docs/m0/results.md). 보고서에 문서당 청크 중앙값·p90 만 있어 실제 PC 의 본문 전체 임베딩 시간을 계산할 수 없었고, 성능·효율 코어 수(KI-017 의 약속)와 날짜 가산(M2)의 근거인 수정일 분포도 없었다. 사용자가 "M2 로 넘어가는 데 무리 없나" 물어서 발견.
+- **원인**: M0 에서 청크 크기를 정한 뒤 진단의 청크 설정(DEC-003, 값을 코드에 직접 씀)을 갱신하지 않았다. 진단 항목을 "지금 마일스톤이 재고 싶은 것"으로만 정했고, 다음 마일스톤이 이 결과로 정할 것과 대조하지 않았다.
+- **고친 방법**: 앱과 진단이 같은 `embed::chunk::BODY_CHUNK` 를 쓴다. 형식별 청크·청크 입력 토큰 합과 찾은 파일 전체 추정, 실측 카드 길이와 본문 전체의 모델별 환산 시간, 성능·효율 코어 수와 그 1·2배 스레드, 수정일 경과 구간과 가장 많이 몰린 하루의 비율을 더해 m1-diag-2 로 다시 냈다(DEC-045). m1-diag-1 은 지우지 않고 대체 표시(DEC-019).
+- **재발 방지 장치**: 공유 상수 `BODY_CHUNK`(크기를 바꾸면 진단도 같이 바뀜), `diag/src/report.rs` `summary_shows_m2_estimates`·`cpu_line_shows_hybrid_split_only_when_hybrid`, `diag/src/extract_stats.rs` `chunk_totals_accumulate_per_format`·`estimate_scales_each_format_by_found_over_processed`·`mtime_buckets_and_top_day_share`, `diag/tests/report.rs` 새 항목 확인. 런북 `release-diag.md` 1단계에 "다음 마일스톤이 이 결과로 정할 것과 보고서 항목 대조"를 추가.
+- **교훈**: 폐쇄망 측정은 한 번 가져가는 데 사용자의 하루가 든다 — 태그 전에 다음 마일스톤 계획이 이 보고서에서 읽을 숫자를 목록으로 만들어 대조한다. 결정한 설정값은 진단에 복사하지 말고 공유 상수로 가리킨다.
