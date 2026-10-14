@@ -43,7 +43,7 @@
 - **진단 보고서에는 문서 내용·경로·파일명·사용자명·컴퓨터명·파일 바이트를 남기지 않는다**(INC-010). 새 항목은 집계 숫자만.
 - 저장소에 넣는 시험 자료는 합성이거나 공공누리 제1유형·MIT 표본(DEC-030). 상용 글꼴을 임베드한 PDF 를 만들지 않는다(비임베드 CID 글꼴·Helvetica 만).
 - 평가 문서 원본, `*.gguf`, `third_party/` 는 커밋하지 않는다.
-- 문서·주석은 한국어. 커밋 메시지 끝에 `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. 저장소 `user.email` 은 `seongguk.dev@gmail.com`(이미 설정됨).
+- 문서·주석은 한국어. 커밋 메시지 끝에 **그 커밋을 실제로 작성한 모델**의 `Co-Authored-By` 줄을 단다(작성자에게 주어진 시스템 지정을 따름 — 아래 Task 들의 커밋 예시에 있는 Opus 줄은 예시일 뿐이다. 실행 중 판정, Task 17). 저장소 `user.email` 은 `seongguk.dev@gmail.com`(이미 설정됨).
 - 문제를 고치면 `incidents.md`(INC + 재발 방지), 스펙에 없는 것을 정하면 `decisions.md`(DEC), 미루면 `known-issues.md`(KI). 번호는 이어서 쓴다(현재 마지막: INC-015, DEC-032, KI-017). 이 계획이 쓰는 번호: DEC-033~042, KI-018~030(Task 18).
 - **HWP 추출 경로**(`hwp.rs`·`walk.rs`·`norm.rs` 의 HWP 사용 부분)를 바꾸는 Task(2·3)는 `cargo test -p extract` 와 함께 공개 평가 커버리지(`cargo run --release -p extract --example coverage -- eval/public/docs/*`)를 Task 2 시작 전에 저장한 기준값과 비교한다(`.claude/rules/extract.md`). 다른 형식만 바꾸는 Task(4~8)는 공개 평가 세트가 HWP·HWPX 뿐이라 해당 없음 — 대신 `cargo test -p extract` 의 커버리지 시험이 통과해야 한다.
 
