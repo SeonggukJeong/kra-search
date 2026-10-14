@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+# third_party/rhwp 는 경로 의존일 뿐 작업 공간 멤버가 아니다(그쪽 테스트를 돌리지 않는다).
+exclude = ["third_party"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.0.1"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"

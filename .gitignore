@@ -3,3 +3,8 @@
 .claude/settings.local.json
 *.gguf
 .DS_Store
+/eval/public/docs/
+/models/
+/third_party/
+/eval/downloads/
+/eval/kra/docs/

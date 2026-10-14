@@ -1,0 +1,46 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-latest, windows-latest] }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: fetch rhwp sources
+        shell: bash
+        run: bash tools/fetch-rhwp.sh
+      - name: libclang (windows)
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - run: cargo build --workspace --release
+      - name: put llama DLLs next to binaries (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dlls = Get-ChildItem target/release/build -Recurse -Filter *.dll | Where-Object { $_.FullName -match 'llama-sys' }
+          $dlls | ForEach-Object { Copy-Item $_.FullName target/release/ }
+          $dlls | ForEach-Object { Copy-Item $_.FullName target/release/deps/ }
+      - run: cargo test --workspace --release
+      - name: cache dev models
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: gguf-${{ hashFiles('tools/fetch-models.sh') }}
+      - name: model tests (real EmbeddingGemma 2 on this OS)
+        shell: bash
+        run: |
+          bash tools/fetch-models.sh
+          cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1
+          # llama.cpp 로컬 패치(logits 버퍼 미할당)가 빠지면 메모리가 1GB 늘어 여기서 떨어진다 — INC-004
+          cargo test -p diag --release --test memory -- --include-ignored --test-threads 1
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/fetch-rhwp.sh
+      - uses: EmbarkStudios/cargo-deny-action@v2
