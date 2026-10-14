@@ -33,18 +33,37 @@ fn stem(name: &str) -> &str {
     Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name)
 }
 
+/// 값 하나의 최대 글자 수. 토크나이저는 값 전체의 토큰을 한꺼번에 만들므로(100만 자 295MB), 블록 하나가 아무리 커도
+/// (공백 줄 없는 TXT·CSV 덤프 = 한 블록 500만 자) 이 크기로 쪼개 메모리를 이 값에 비례하게 묶는다(DEC-041).
+pub const MAX_VALUE_CHARS: usize = 20_000;
+
 /// 블록을 넣되 합계 `left` 글자를 넘지 않게(넘는 블록은 잘라 넣고, 그 뒤로는 넣지 않는다).
+/// 한 블록이 MAX_VALUE_CHARS 보다 길면 공백·줄바꿈 근처에서 여러 값으로 쪼갠다(없으면 글자 경계에서 자른다).
 fn push_capped(dst: &mut Vec<String>, left: &mut usize, text: &str) {
     if *left == 0 || text.trim().is_empty() {
         return;
     }
-    let n = text.chars().count();
-    if n <= *left {
-        dst.push(text.to_string());
-        *left -= n;
-    } else {
-        dst.push(text.chars().take(*left).collect());
-        *left = 0;
+    let mut rest = match text.char_indices().nth(*left) {
+        Some((end, _)) => &text[..end],
+        None => text,
+    };
+    *left -= rest.chars().count();
+    while !rest.is_empty() {
+        let cut = match rest.char_indices().nth(MAX_VALUE_CHARS) {
+            None => rest.len(),
+            Some((hard, _)) => {
+                // 한도 안의 마지막 공백 뒤에서 자른다(앞부분이 비지 않을 때만).
+                match rest[..hard].char_indices().rev().find(|(_, c)| c.is_whitespace()) {
+                    Some((i, c)) if i + c.len_utf8() > 0 => i + c.len_utf8(),
+                    _ => hard,
+                }
+            }
+        };
+        let (piece, tail) = rest.split_at(cut);
+        if !piece.trim().is_empty() {
+            dst.push(piece.to_string());
+        }
+        rest = tail;
     }
 }
 
@@ -342,14 +361,32 @@ mod tests {
         let doc = d(None, &["머리", ""], &body);
         let k = KeywordDoc::new(1, Some(&doc), &["a.hwp".into()]);
         assert_eq!(k.headings, vec!["머리".to_string()], "빈 블록은 뺀다");
-        assert_eq!(k.body.len(), 5, "블록 하나 = 값 하나, 500만 자에서 멈춘다");
+        assert_eq!(k.body.len(), BODY_MAX_CHARS / MAX_VALUE_CHARS, "500만 자에서 멈춘다");
         assert_eq!(k.body.iter().map(|b| b.chars().count()).sum::<usize>(), BODY_MAX_CHARS);
-        assert!(k.body.iter().all(|b| b.chars().count() <= 1_000_000));
-        // 상한 경계에 걸친 블록은 잘라 넣는다
+        assert!(k.body.iter().all(|b| b.chars().count() <= MAX_VALUE_CHARS));
+        // 상한 경계에 걸친 블록은 잘라 넣는다(블록은 서로 다른 값)
         let doc = d(None, &[], &[&"나".repeat(BODY_MAX_CHARS - 3), "다라마바사"]);
         let k = KeywordDoc::new(2, Some(&doc), &[]);
-        assert_eq!(k.body.len(), 2);
-        assert_eq!(k.body[1], "다라마");
+        assert_eq!(k.body.last().unwrap(), "다라마");
+        assert_eq!(k.body.iter().map(|b| b.chars().count()).sum::<usize>(), BODY_MAX_CHARS);
+    }
+
+    #[test]
+    fn huge_single_block_is_split_into_bounded_values() {
+        // 공백 줄 없는 덤프: 100만 자 한 블록 → 값 여러 개, 모두 한도 이하, 글자는 그대로(공백 경계에서 자름)
+        let text = "한국마사회 경마 시행 계획 ".repeat(1_000_000 / 13 + 1);
+        let doc = d(None, &[], &[text.as_str()]);
+        let k = KeywordDoc::new(1, Some(&doc), &[]);
+        assert!(k.body.len() > 1);
+        assert!(k.body.iter().all(|b| b.chars().count() <= MAX_VALUE_CHARS));
+        assert_eq!(k.body.concat(), text);
+        // 공백 경계에서 잘렸으니 낱말이 반으로 갈라지지 않는다
+        assert!(k.body.iter().all(|b| b.ends_with(' ')));
+        // 공백 없는 덤프는 글자 경계에서 자르되 합계는 보존
+        let solid = "가".repeat(1_000_000);
+        let k = KeywordDoc::new(2, Some(&d(None, &[], &[solid.as_str()])), &[]);
+        assert!(k.body.len() > 1 && k.body.iter().all(|b| b.chars().count() <= MAX_VALUE_CHARS));
+        assert_eq!(k.body.concat(), solid);
     }
 
     #[test]
@@ -373,6 +410,15 @@ mod tests {
         let para = "한국마사회 경마 시행 계획 보고 ".repeat(5_000_000 / 1_000 / 18 + 1);
         let blocks: Vec<&str> = std::iter::repeat_n(para.as_str(), 1_000).collect();
         let kw = index_of(&[(1, d(None, &[], &blocks), "큰문서.txt")]);
+        assert_eq!(ids(&kw, "시행"), vec![1]);
+    }
+
+    /// 공백 줄 없는 500만 자 한 블록(TXT·CSV 덤프) — 값으로 쪼개져 메모리가 묶이는지 실측용.
+    #[test]
+    #[ignore]
+    fn big_single_block_indexes_bounded() {
+        let text = "한국마사회 경마 시행 계획 보고 ".repeat(BODY_MAX_CHARS / 17 + 1);
+        let kw = index_of(&[(1, d(None, &[], &[text.as_str()]), "덤프.txt")]);
         assert_eq!(ids(&kw, "시행"), vec![1]);
     }
 
