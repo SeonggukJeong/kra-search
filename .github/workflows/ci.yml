@@ -39,7 +39,20 @@ jobs:
           $dlls = Get-ChildItem target/release/build -Recurse -Filter *.dll | Where-Object { $_.FullName -match 'llama-sys' }
           $dlls | ForEach-Object { Copy-Item $_.FullName target/release/ }
           $dlls | ForEach-Object { Copy-Item $_.FullName target/release/deps/ }
+      - name: put pdfium next to binaries (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp third_party/pdfium/win-x64/bin/pdfium.dll target/release/
       - run: cargo test --workspace --release
+      # 시험은 --pdfium 으로 경로를 직접 준다 — 제품 배치(실행 파일 옆 pdfium.dll, 인자 없음)는 여기서 확인한다.
+      # 결과에 korean.pdf 가 나오면 본문(렛츠런파크)을 읽은 것 = pdfium 을 불러왔다(못 불러오면 파일 이름으로만 찾힌다).
+      - name: kra-search default pdfium path (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          target/release/kra-search.exe --home "$RUNNER_TEMP/kh" index --root crates/extract/tests/fixtures/pdf
+          target/release/kra-search.exe --home "$RUNNER_TEMP/kh" search 렛츠런파크 | tee "$RUNNER_TEMP/out.txt"
+          grep -q "korean.pdf" "$RUNNER_TEMP/out.txt"
       - name: cache dev models
         uses: actions/cache@v4
         with:
