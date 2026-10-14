@@ -13,7 +13,7 @@
 `llama_get_embeddings_seq`, `llama_tokenize`, `llama_print_system_info`, `LLAMA_POOLING_TYPE_MEAN`,
 `ggml_backend_load_all_from_path`. `llama_batch.logits` 필드명 유지.
 
-## 개발용 GGUF (unsloth/embeddinggemma-2-GGUF)
+## 개발용 GGUF (unsloth/embeddinggemma-2-GGUF, 리비전 `031f0d4b35536f69ab3509d4893c923264fcf253` — `tools/fetch-models.sh` 에 고정)
 | 로컬 파일 | 원본 파일 | 크기 | SHA-256 |
 |---|---|---|---|
 | `models/embeddinggemma-2-Q8_0.gguf` | `embeddinggemma-2-Q8_0.gguf` | 309,855,520 | `6f1bd4ac6c5df7444f9cca7ca36cafe6cfa34cd6f49fefb1e0b4be8143aed8bc` |

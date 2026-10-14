@@ -21,7 +21,7 @@
 | DEC-006 | `load_mode = MMAP`, 출력 차원 `llama_model_n_embd_out` | b11574 API, INC-002 | 없음 | 유효 |
 | DEC-012 | llama.cpp 로컬 패치(풀링 임베딩에서 logits 버퍼 미할당) | INC-004, 메모리 1.65→0.65GB | llama.cpp 올릴 때 패치 재작성 | 유효 |
 | DEC-013 | `embed::engine::init(backend_dir)` 공개 | 모델 없이 시스템 정보 보고 | 없음 | 유효 |
-| DEC-017 | llama/ggml DLL 은 동적 CRT(`/MD`) + VC++ 런타임 앱 로컬 동봉. 정적 CRT 는 우리 exe 에만 | INC-005 | 없음(스펙 §11 문구 수정 필요) | 유효 |
+| DEC-017 | llama/ggml DLL 은 동적 CRT(`/MD`) + VC++ 런타임 앱 로컬 동봉. 정적 CRT 는 우리 exe 에만 | INC-005 | 없음(스펙 §3·§11 반영 2026-10-14) | 유효 |
 | DEC-018 | CI 가 macOS·Windows 에서 실모델 시험(모델 캐시) | Windows 임베딩을 CI 가 한 번도 안 돌렸음(INC-005) | 실행당 약 3분 | 유효 |
 | DEC-020 | Windows 컴파일러는 MSVC + `/O2` 유지(clang 아님) | clang -O3 가 약 5% 빠를 뿐, Ninja·clang 도구 의존이 늘어남 | 처리량 약 5% | 유효 |
 | DEC-021 | `llama_encode` 우선, 실패 시 decode | INC-007 | 없음 | 유효 |
