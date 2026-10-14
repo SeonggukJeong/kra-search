@@ -9,6 +9,7 @@ publish = false
 doc = { path = "../doc" }
 embed = { path = "../embed" }
 extract = { path = "../extract" }
+index = { path = "../index" }
 vector = { path = "../vector" }
 serde.workspace = true
 serde_json.workspace = true

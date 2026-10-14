@@ -1887,6 +1887,7 @@ dependencies = [
  "doc",
  "embed",
  "extract",
+ "index",
  "serde",
  "serde_json",
  "toml",
