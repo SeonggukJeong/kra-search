@@ -81,7 +81,6 @@ pub(crate) fn first_element_text(xml: &str, local: &str) -> Option<String> {
 
 /// ODF 암호 문서인가. 암호를 건 ODF 도 ZIP 이라 겉으로는 정상이고, content.xml 이 암호문이다.
 /// manifest 의 `<manifest:encryption-data>` 로 알아본다(없으면 content.xml 의 UTF-8 변환이 실패해 Corrupt 로 잘못 분류됨).
-#[allow(dead_code)] // ODF 추출기(Task 5·6)가 쓴다
 pub(crate) fn odf_encrypted(zip: &mut Zip) -> Result<bool, FailKind> {
     Ok(read_part(zip, "META-INF/manifest.xml")?.is_some_and(|m| m.contains("encryption-data")))
 }

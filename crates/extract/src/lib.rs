@@ -8,6 +8,7 @@ pub mod magic;
 pub(crate) mod norm;
 pub mod runner;
 pub(crate) mod table;
+mod odf;
 mod ooxml;
 mod walk;
 pub(crate) mod xmlutil;
@@ -95,6 +96,7 @@ pub fn extract_bytes(format: Format, bytes: &[u8]) -> Result<Extracted, (FailKin
         Format::Hwp | Format::Hwpx => hwp::extract_hwp(bytes),
         Format::Docx => plain(ooxml::docx(bytes)),
         Format::Pptx => plain(ooxml::pptx(bytes)),
+        Format::Odt | Format::Odp => plain(odf::odf(bytes)),
         // 나머지 형식은 이후 Task 에서 채운다.
         _ => Err((FailKind::Unsupported, String::new())),
     }

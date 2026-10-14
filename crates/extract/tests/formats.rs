@@ -178,3 +178,46 @@ fn password_protected_office_is_encrypted() {
     let (_d, p) = temp_file("암호.xlsx", &ole);
     assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::Encrypted));
 }
+
+#[test]
+fn odt_headings_spaces_footnote_table() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.odt")));
+    assert_eq!(title.as_deref(), Some("규정 개정안"));
+    assert_eq!(b, vec![
+        kt(Heading, "제1장 총칙"),
+        kt(Paragraph, "목적 및 범위 탭 뒤\n다음 줄"),
+        kt(Paragraph, "각주가 있는 문장 각주 본문 이어지는 글"),
+        kt(Paragraph, "목록 항목 & 하나"),
+        kt(TableHeader, "구분 | 수량 | 비고"),
+        kt(TableRow, "구분: 말 | 수량: 12"),
+        kt(TableRow, "구분: 합쳐진 칸 | 비고: 끝"),
+        kt(Paragraph, "맺음"),
+    ]);
+}
+
+#[test]
+fn odp_titles_are_headings_and_notes_are_skipped() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.odp")));
+    assert_eq!(title.as_deref(), Some("발표 자료"));
+    assert_eq!(b, vec![
+        kt(Heading, "발표 제목"),
+        kt(Paragraph, "부제목"),
+        kt(Heading, "둘째 장"),
+        kt(Paragraph, "요점 하나"),
+        kt(Paragraph, "요점 둘"),
+    ]);
+}
+
+#[test]
+fn odt_without_title_uses_first_heading() {
+    let (title, _) = blocks(extract_one(&office("untitled.odt")));
+    assert_eq!(title.as_deref(), Some("제1장 총칙"));
+}
+
+#[test]
+fn encrypted_odt_is_encrypted_not_corrupt() {
+    // 암호 ODF 는 ZIP 이고 content.xml 이 암호문 — manifest 의 encryption-data 로 알아본다.
+    assert_eq!(fail_kind(&extract_one(&office("encrypted.odt"))), Some(FailKind::Encrypted));
+}
