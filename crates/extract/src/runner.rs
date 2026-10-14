@@ -31,7 +31,16 @@ pub fn run_isolated(exe: &Path, file: &Path, timeout: Duration) -> Outcome {
     run_command(cmd, timeout)
 }
 
-/// 임의의 자식 명령을 실행하고 stdout 한 줄의 `Outcome` JSON을 읽는다. 시간 초과면 종료시킨다.
+/// 자식 표준 출력에서 마지막 표지(MARKER) 뒤의 JSON 을 읽는다. 표지가 없으면 출력 전체(옛 형식).
+/// 잘못된 UTF-8 잡음은 대체 문자로 바꿔 읽는다(읽기 실패로 "비정상 종료"가 되지 않게).
+pub fn parse_child_output(out: &[u8]) -> Option<Outcome> {
+    let s = String::from_utf8_lossy(out);
+    let m = crate::worker::MARKER;
+    let tail = s.rfind(m).map(|i| &s[i + m.len()..]).unwrap_or(&s);
+    serde_json::from_str(tail.trim()).ok()
+}
+
+/// 임의의 자식 명령을 실행하고 stdout 의 표지 뒤 `Outcome` JSON 을 읽는다(표지가 없으면 한 줄 JSON). 시간 초과면 종료시킨다.
 pub fn run_command(mut cmd: Command, timeout: Duration) -> Outcome {
     let mut child = match cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
         Ok(c) => c,
@@ -39,14 +48,14 @@ pub fn run_command(mut cmd: Command, timeout: Duration) -> Outcome {
     };
     let mut stdout = child.stdout.take().unwrap();
     let reader = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stdout.read_to_string(&mut s);
-        s
+        let mut b = Vec::new();
+        let _ = stdout.read_to_end(&mut b);
+        b
     });
     match child.wait_timeout(timeout) {
         Ok(Some(status)) => {
             let out = reader.join().unwrap_or_default();
-            serde_json::from_str(out.trim()).unwrap_or(Outcome::Crashed { code: status.code() })
+            parse_child_output(&out).unwrap_or(Outcome::Crashed { code: status.code() })
         }
         _ => {
             let _ = child.kill();

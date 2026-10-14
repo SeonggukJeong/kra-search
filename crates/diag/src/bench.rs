@@ -61,7 +61,24 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
 
-pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize) -> ModelBench {
+/// 이 프로세스의 최대 메모리(MB). Windows 는 OS 가 기록한 최대 작업 집합(PeakWorkingSetSize)이라
+/// 표본 사이의 순간 최대도 잡는다(KI-002). 측정은 자식 프로세스(bench-one)에서 돌므로 모델 하나의 최대다.
+#[cfg(windows)]
+pub fn peak_rss_mb() -> Option<u64> {
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let mut c = PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+    unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) }.ok()?;
+    Some(c.PeakWorkingSetSize as u64 / 1024 / 1024)
+}
+
+/// 그 밖의 OS(개발용)는 표본 최대를 그대로 쓴다.
+#[cfg(not(windows))]
+pub fn peak_rss_mb() -> Option<u64> {
+    None
+}
+
+pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize, logical: usize) -> ModelBench {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let opts = |t: usize| EngineOptions { threads: t, max_tokens: 1024, backend_dir: backend_dir.map(Path::to_path_buf) };
     let mut r = ModelBench { model_file: name, ..Default::default() };
@@ -108,7 +125,8 @@ pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize) -> 
     r.rss_mb_peak = rss_mb();
     drop(m);
 
-    let mut threads = vec![1, 2, physical.max(1)];
+    // 하이브리드 CPU(성능+효율 코어)에서는 물리 코어 수가 최적이 아닐 수 있다(KI-017) — 여러 값을 잰다.
+    let mut threads: Vec<usize> = [1, 2, 4, 6, 8, 12, 16, physical, logical].into_iter().filter(|&t| t >= 1 && t <= logical.max(1)).collect();
     threads.sort();
     threads.dedup();
     for th in threads {
@@ -127,6 +145,7 @@ pub fn bench_model(path: &Path, backend_dir: Option<&Path>, physical: usize) -> 
         }
         r.rss_mb_peak = r.rss_mb_peak.max(rss_mb());
     }
+    r.rss_mb_peak = r.rss_mb_peak.max(peak_rss_mb().unwrap_or(0));
     let best = r.tokens_per_sec.iter().map(|x| x.1).fold(0.0, f64::max);
     if best > 0.0 {
         r.card_minutes_per_10k = 10_000.0 * CARD_TOKENS / best / 60.0;
@@ -187,14 +206,14 @@ pub fn flat_bench(n: usize) -> FlatBench {
 
 /// 모델 하나를 자식 프로세스(`kra-diag bench-one`)에서 측정한다.
 /// 메모리를 깨끗하게 재고, 특정 CPU 명령어 문제로 비정상 종료돼도 진단 전체는 계속된다.
-fn bench_in_child(model: &Path, threads: usize) -> ModelBench {
+fn bench_in_child(model: &Path, threads: usize, logical: usize) -> ModelBench {
     use std::io::Read;
     use wait_timeout::ChildExt;
     let name = model.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let fail = |msg: String| ModelBench { model_file: name.clone(), error: Some(msg), ..Default::default() };
     let Ok(exe) = std::env::current_exe() else { return fail("실행 파일 경로를 알 수 없습니다".into()) };
     let mut child = match std::process::Command::new(exe)
-        .args(["bench-one", "--threads", &threads.to_string()])
+        .args(["bench-one", "--threads", &threads.to_string(), "--logical", &logical.to_string()])
         .arg(model)
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -223,6 +242,7 @@ fn bench_in_child(model: &Path, threads: usize) -> ModelBench {
 
 pub fn run(models_dir: &Path, skip_flat: bool, flat_n: usize) -> BenchInfo {
     let physical = System::physical_core_count().unwrap_or(2);
+    let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(physical);
     let models = list_models(models_dir);
     let mut b = BenchInfo::default();
     if models.is_empty() {
@@ -234,7 +254,7 @@ pub fn run(models_dir: &Path, skip_flat: bool, flat_n: usize) -> BenchInfo {
     }
     for m in &models {
         eprintln!("모델 측정 중: {}", m.file_name().unwrap_or_default().to_string_lossy());
-        b.models.push(bench_in_child(m, physical));
+        b.models.push(bench_in_child(m, physical, logical));
     }
     if !skip_flat {
         eprintln!("벡터 검색 측정 중({flat_n}개)…");

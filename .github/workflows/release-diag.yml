@@ -1,7 +1,7 @@
-name: release-m0
+name: release-diag
 on:
   push:
-    tags: ["m0-diag-*"]
+    tags: ["m0-diag-*", "m1-diag-*"]
 permissions: { contents: write }
 jobs:
   build:
@@ -14,6 +14,9 @@ jobs:
       - name: fetch rhwp sources
         shell: bash
         run: bash tools/fetch-rhwp.sh
+      - name: fetch pdfium
+        shell: bash
+        run: bash tools/fetch-pdfium.sh win-x64
       - run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
       - run: cargo build --release -p diag
       - name: package
@@ -28,8 +31,9 @@ jobs:
           for f in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do cp "/c/Windows/System32/$f" $OUT/; done
           bash tools/fetch-models.sh
           cp models/*.gguf $OUT/models/
-          cp docs/m0/README-diag.txt $OUT/
-          cp docs/m0/manual-checks.md $OUT/manual-checks.txt
+          cp docs/diag/README-diag.txt $OUT/
+          cp third_party/pdfium/win-x64/bin/pdfium.dll $OUT/
+          mkdir -p $OUT/licenses/pdfium && cp -r third_party/pdfium/win-x64/LICENSE third_party/pdfium/win-x64/licenses/* $OUT/licenses/pdfium/
           ls -la $OUT $OUT/models
           7z a $OUT.zip $OUT > /dev/null
           sha256sum $OUT.zip > $OUT.zip.sha256
@@ -42,7 +46,10 @@ jobs:
           ./kra-diag.exe env
           ./kra-diag.exe bench --skip-flat
           grep -q "초당" kra-diag-summary.txt
+          # 실행 파일 옆 pdfium 이 실제로 불러와지는지 — 시험 자료 PDF 중 글자 있는 3개가 읽혀야 한다(분모는 시험 자료가 늘면 바뀌므로 성공 수만 본다)
+          ./kra-diag.exe extract-stats --root "$GITHUB_WORKSPACE/crates/extract/tests/fixtures"
+          grep -q "pdf 3/" kra-diag-summary.txt
       - name: release
         env: { GH_TOKEN: "${{ github.token }}" }
         shell: bash
-        run: gh release create "$GITHUB_REF_NAME" "$OUT.zip" "$OUT.zip.sha256" --prerelease --title "M0 진단 도구 $GITHUB_REF_NAME" --notes-file docs/m0/README-diag.txt
+        run: gh release create "$GITHUB_REF_NAME" "$OUT.zip" "$OUT.zip.sha256" --prerelease --title "진단 도구 $GITHUB_REF_NAME" --notes-file docs/diag/README-diag.txt

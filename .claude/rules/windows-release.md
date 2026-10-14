@@ -2,7 +2,7 @@
 paths:
   - ".github/workflows/**"
   - ".cargo/config.toml"
-  - "docs/m0/README-diag.txt"
+  - "docs/diag/README-diag.txt"
 ---
 # CI·Windows 빌드·릴리즈 규칙
 - Windows 패키지에는 llama/ggml DLL(CPU 변형 전부)과 VC++ 런타임 3개(vcruntime140, vcruntime140_1, msvcp140)를 exe 옆에 둔다(INC-005).

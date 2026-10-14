@@ -37,7 +37,8 @@ pub fn extract_one_with(path: &Path, measure_coverage: bool) -> Outcome {
     }
 }
 
-/// 결과를 stdout 한 줄 JSON으로 출력한다.
+/// 결과를 stdout 에 "\n{MARKER}{json}" 한 줄로 출력한다. 파서가 표준 출력에 찍은 잡음과 구분하려고 워커와 같은 표지를 붙인다.
 pub fn extract_one_main(path: &Path, measure_coverage: bool) {
-    println!("{}", serde_json::to_string(&extract_one_with(path, measure_coverage)).unwrap());
+    let json = serde_json::to_string(&extract_one_with(path, measure_coverage)).unwrap();
+    println!("\n{}{json}", crate::worker::MARKER);
 }

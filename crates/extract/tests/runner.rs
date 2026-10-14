@@ -71,3 +71,13 @@ fn hang_is_killed_by_timeout() {
     let r = run_command(cmd, Duration::from_secs(2));
     assert!(matches!(r, Outcome::Timeout), "{r:?}");
 }
+
+#[test]
+fn child_output_noise_before_marker_is_ignored() {
+    let ok = serde_json::to_string(&Outcome::Failed { kind: extract::FailKind::Drm, magic: String::new() }).unwrap();
+    let out = [b"pdfium says hi\n\xff\xfe junk\n".as_slice(), b"\n", extract::worker::MARKER.as_bytes(), ok.as_bytes(), b"\n"].concat();
+    assert!(matches!(extract::runner::parse_child_output(&out), Some(Outcome::Failed { kind: extract::FailKind::Drm, .. })));
+    assert!(extract::runner::parse_child_output(b"garbage").is_none());
+    // 표지가 없는 옛 형식(JSON 한 줄)도 읽는다
+    assert!(extract::runner::parse_child_output(ok.as_bytes()).is_some());
+}

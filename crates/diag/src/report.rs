@@ -68,8 +68,25 @@ pub struct FlatBench {
     pub result_checksum: u64,
 }
 
+/// 형식(확장자) 하나의 집계. 확장자는 `Format::ext()` 고정 라벨이다(파일명 아님 — INC-010).
+#[derive(Serialize, serde::Deserialize, Default, Clone)]
+pub struct FormatCount {
+    pub ext: String,
+    /// 표본을 뽑기 전 전체 개수
+    pub found: usize,
+    /// 실제로 추출한(표본) 개수
+    pub total: usize,
+    pub ok: usize,
+    pub no_text: usize,
+    pub drm: usize,
+    pub encrypted: usize,
+    pub other_fail: usize,
+    pub timeout: usize,
+}
+
 #[derive(Serialize, serde::Deserialize, Default)]
 pub struct ExtractInfo {
+    /// 추출한(표본) 파일 수
     pub total: usize,
     /// 지금까지 확인한 파일 수(중간 저장이면 total 보다 작다)
     pub processed: usize,
@@ -99,13 +116,35 @@ pub struct ExtractInfo {
     /// 커버리지 0.9 미만(본문이 눈에 띄게 빠진) 문서 수
     pub coverage_below_90: usize,
     pub elapsed_sec: f64,
+    /// 표본을 뽑기 전 전체 대상 수(클라우드 전용 제외)
+    #[serde(default)]
+    pub found: usize,
+    /// 열지 않고 건너뛴 클라우드 자리표시자 수(OneDrive 온라인 전용 등)
+    #[serde(default)]
+    pub cloud_only: usize,
+    #[serde(default)]
+    pub by_format: Vec<FormatCount>,
+    #[serde(default)]
+    pub pdf_pages: u64,
+    #[serde(default)]
+    pub pdf_bad_pages: u64,
+    #[serde(default)]
+    pub article_numbered_docs: usize,
+    #[serde(default)]
+    pub article_numbered_paras: u64,
+    #[serde(default)]
+    pub card_tokens_mean: Option<f64>,
+    #[serde(default)]
+    pub card_tokens_p50: Option<f64>,
+    #[serde(default)]
+    pub card_tokens_p90: Option<f64>,
 }
 
 impl Report {
     pub fn new() -> Self {
         let now = time::OffsetDateTime::now_utc();
         Self {
-            schema: 1,
+            schema: 2,
             tool_version: env!("CARGO_PKG_VERSION").into(),
             generated_utc: now.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
             ..Default::default()
@@ -162,10 +201,18 @@ pub fn summarize(r: &Report) -> Vec<String> {
                 s.push(format!("모델 {}: 오류 — {}", m.model_file, err));
                 continue;
             }
-            let (th, best) = m.tokens_per_sec.iter().cloned().fold((0, 0.0), |a, x| if x.1 > a.1 { x } else { a });
+            let speed = if m.tokens_per_sec.is_empty() {
+                "초당 토큰 -(측정 실패)".to_string()
+            } else {
+                let (th, best) = m.tokens_per_sec.iter().cloned().fold((0, 0.0), |a, x| if x.1 > a.1 { x } else { a });
+                format!("초당 {}토큰({}스레드)", thousands(best), th)
+            };
+            let card = if m.card_minutes_per_10k > 0.0 { format!("약 {:.0}분", m.card_minutes_per_10k) } else { "-".into() };
+            let per_thread: Vec<String> = m.tokens_per_sec.iter().map(|(t, v)| format!("{t}→{v:.0}")).collect();
             s.push(format!(
-                "모델 {}: 초당 {}토큰({}스레드) → 빠른 의미 검색 문서 1만 개 약 {:.0}분 · 검색어 p95 {:.0}ms · 첫 검색 {:.0}ms · 로드 {}ms · 메모리 로드 후 {}MB / 최대 {}MB",
-                m.model_file, thousands(best), th, m.card_minutes_per_10k, m.query_ms_p95, m.first_query_ms, m.load_ms, m.rss_mb_after_load, m.rss_mb_peak
+                "모델 {}: {} → 빠른 의미 검색 문서 1만 개 {} · 검색어 p95 {:.0}ms · 첫 검색 {:.0}ms · 로드 {}ms · 메모리 로드 후 {}MB / 최대 {}MB · 스레드별 {}",
+                m.model_file, speed, card, m.query_ms_p95, m.first_query_ms, m.load_ms, m.rss_mb_after_load, m.rss_mb_peak,
+                if per_thread.is_empty() { "-".into() } else { per_thread.join(" · ") }
             ));
         }
         if b.flat.n > 0 {
@@ -178,8 +225,10 @@ pub fn summarize(r: &Report) -> Vec<String> {
     if let Some(x) = &r.extract {
         let top: Vec<String> = x.not_container_magic_top.iter().take(3).map(|(m, c)| format!("{m}×{c}")).collect();
         s.push(format!(
-            "HWP {}개{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · HWP아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · 추출 커버리지 {} · {:.0}초",
-            thousands(x.total as f64), if x.processed < x.total { format!("(중간 저장 — {}개 확인)", thousands(x.processed as f64)) } else { String::new() }, pct(x.ok, x.processed.max(1)), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
+            "문서 {}개{}{}: 성공 {} · 배포용 {} · 암호 {} · 보안문서(DRM) {} · 손상 {} · 미지원 {} · 형식 아님 {}(상위 헤더: {}) · 시간초과 {} · 비정상종료 {} · 1,000자당 토큰 {} · 문서당 청크 p50 {} / p90 {} · 추출 커버리지 {} · {:.0}초",
+            thousands(x.total as f64),
+            if x.found > x.total { format!("(전체 {}개 중 형식마다 최대 3,000개)", thousands(x.found as f64)) } else { String::new() },
+            if x.processed < x.total { format!("(중간 저장 — {}개 확인)", thousands(x.processed as f64)) } else { String::new() }, pct(x.ok, x.processed.max(1)), x.distribution, x.encrypted, x.drm, x.corrupt, x.unsupported,
             x.not_container, if top.is_empty() { "-".into() } else { top.join(" ") }, x.timeout, x.crashed,
             x.tokens_per_1k_chars_median.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
             x.chunks_per_doc_p50.map(|v| format!("{v:.0}")).unwrap_or("-".into()),
@@ -190,6 +239,31 @@ pub fn summarize(r: &Report) -> Vec<String> {
             },
             x.elapsed_sec
         ));
+        s.push(format!("읽기 오류 {} · 100MB 초과 {} · 클라우드 전용(열지 않음) {}", x.unreadable, x.too_large, x.cloud_only));
+        if !x.by_format.is_empty() {
+            let parts: Vec<String> = x
+                .by_format
+                .iter()
+                .map(|f| {
+                    let mut p = format!("{} {}/{}", f.ext, thousands(f.ok as f64), thousands(f.total as f64));
+                    if f.no_text > 0 {
+                        p.push_str(&format!("(글자 없음 {})", f.no_text));
+                    }
+                    if f.found > f.total {
+                        p.push_str(&format!("(전체 {}개 중 표본)", thousands(f.found as f64)));
+                    }
+                    p
+                })
+                .collect();
+            s.push(format!("형식별 읽기 성공: {}", parts.join(" · ")));
+        }
+        if x.pdf_pages > 0 {
+            s.push(format!("PDF 쪽: 전체 {} · 비었거나 깨져 버린 쪽 {}", thousands(x.pdf_pages as f64), thousands(x.pdf_bad_pages as f64)));
+        }
+        s.push(format!("\"제N조\" 자동 번호: 문서 {}개 · 문단 {}개", x.article_numbered_docs, x.article_numbered_paras));
+        if let (Some(m), Some(p50), Some(p90)) = (x.card_tokens_mean, x.card_tokens_p50, x.card_tokens_p90) {
+            s.push(format!("문서 카드 길이(토큰): 평균 {m:.0} · 중앙값 {p50:.0} · 90% {p90:.0}"));
+        }
     }
     s
 }
@@ -226,4 +300,27 @@ pub fn write(r: &mut Report, dir: &Path, print: bool) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_speed_shows_dash_not_zero() {
+        let r = Report {
+            bench: Some(BenchInfo { models: vec![ModelBench { model_file: "m.gguf".into(), ..Default::default() }], ..Default::default() }),
+            ..Default::default()
+        };
+        let s = summarize(&r).join("\n");
+        assert!(s.contains("초당 토큰 -(측정 실패)") && !s.contains("0스레드") && !s.contains("약 0분"), "{s}");
+    }
+
+    #[test]
+    fn summary_shows_unreadable_too_large_and_cloud() {
+        let x = ExtractInfo { total: 5, processed: 5, found: 5, unreadable: 1, too_large: 2, cloud_only: 3, ..Default::default() };
+        let r = Report { extract: Some(x), ..Default::default() };
+        let s = summarize(&r).join("\n");
+        assert!(s.contains("읽기 오류 1 · 100MB 초과 2 · 클라우드 전용(열지 않음) 3"), "{s}");
+    }
 }
