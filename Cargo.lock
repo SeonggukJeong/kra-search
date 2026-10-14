@@ -119,6 +119,7 @@ dependencies = [
  "index",
  "platform",
  "rusqlite",
+ "serde_json",
  "tempfile",
 ]
 

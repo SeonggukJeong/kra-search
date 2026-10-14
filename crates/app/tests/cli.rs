@@ -42,9 +42,13 @@ impl Env {
     }
 
     fn exec(&self, args: &[&str]) -> (Output, String) {
+        self.exec_with_pdfium(&pdfium(), args)
+    }
+
+    fn exec_with_pdfium(&self, pdfium: &Path, args: &[&str]) -> (Output, String) {
         let out = Command::new(env!("CARGO_BIN_EXE_kra-search"))
             .arg("--home").arg(self.home.path())
-            .arg("--pdfium").arg(pdfium())
+            .arg("--pdfium").arg(pdfium)
             .args(args)
             .output()
             .unwrap();
@@ -75,6 +79,8 @@ fn index_and_search_all_formats() {
     let e = Env::new();
     let s = e.index();
     assert!(s.contains("파일 6개"), "{s}");
+    // 요약도 UI D7 용어(추출 실패 → "열 수 없는 파일")
+    assert!(s.contains("열 수 없는 파일 1개(다시 시도 포함)") && !s.contains("못 읽음"), "{s}");
     let r = e.run(&["search", "렛츠런파크"]);
     assert!(r.contains("운영계획") && r.contains("시행계획.pdf"), "{r}");
     assert!(r.contains("같은 내용 1개 더"), "복사본은 결과 한 줄로 묶인다:\n{r}");
@@ -88,6 +94,40 @@ fn index_and_search_all_formats() {
     let st = e.run(&["status"]);
     assert!(st.contains("파일 6") && st.contains("내용 5"), "{st}");
     assert!(!st.contains("키워드 색인"), "화면 문구는 UI D7 용어(키워드 색인 → 검색):\n{st}");
+}
+
+/// 같은 내용 경로가 많아도 한 결과에 3개까지만 보이고 나머지는 개수로(명령줄이 경로로 넘치지 않게).
+#[test]
+fn duplicate_paths_are_capped_in_search_output() {
+    let e = Env::new();
+    for i in 1..=4 {
+        std::fs::copy(fixtures().join("office/sample.docx"), e.docs.path().join(format!("사본{i}.docx"))).unwrap();
+    }
+    e.index();
+    let r = e.run(&["search", "렛츠런파크"]);
+    let line = r.lines().find(|l| l.contains("같은 내용")).unwrap_or_else(|| panic!("{r}"));
+    assert!(line.contains("같은 내용 5개 더:") && line.ends_with("외 2개"), "{line}");
+    assert_eq!(line.matches(".docx").count(), 3, "{line}");
+}
+
+/// pdfium 을 못 불러오면 PDF 를 기록하지 않고 건너뛴다 — "열 수 없는 파일"로 굳지 않고, 도구가 돌아오면 다음 index 에서 읽힌다.
+#[test]
+fn pdf_is_skipped_without_pdfium_and_read_later() {
+    let e = Env::new();
+    let missing = e.home.path().join("없는폴더").join(extract::pdf::LIB_NAME);
+    let root = e.docs.path().to_str().unwrap().to_string();
+    let (out, s) = e.exec_with_pdfium(&missing, &["index", "--root", &root]);
+    assert!(out.status.success(), "{s}");
+    assert!(s.contains("PDF 는 이번에 건너뜁니다") && s.contains("PDF 건너뜀 1개"), "{s}");
+    assert!(!s.contains(missing.to_str().unwrap()), "안내에 경로를 넣지 않는다:\n{s}");
+    let st = e.run(&["status"]);
+    assert!(st.contains("파일 5 "), "PDF 는 기록하지 않는다:\n{st}");
+    let r = e.run(&["search", "시행계획"]);
+    assert!(!r.contains("시행계획.pdf"), "{r}");
+    let s = e.index();
+    assert!(!s.contains("건너뜁니다") && s.contains("바뀐 파일 1개"), "{s}");
+    let r = e.run(&["search", "렛츠런파크"]);
+    assert!(r.contains("시행계획.pdf"), "{r}");
 }
 
 #[test]

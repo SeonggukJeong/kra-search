@@ -96,7 +96,7 @@ fn to_strings(roots: &[PathBuf]) -> Vec<String> {
 /// 루트를 정해 저장하고 한 번 색인한다. `roots` 가 비어 있으면 저장된 루트(그것도 없으면 기본 폴더)로 채운다.
 /// meta 손상은 루트를 읽거나 바꾸다가 드러나도 `MetaCorrupt` 로 돌려준다 — 부르는 쪽이 한 번 다시 만든다.
 /// 저장된 루트를 읽기 전에 손상이 드러나면 루트를 알 수 없어 다시 만들 때 기본 폴더를 쓴다(KI-030).
-fn index_once(store: &mut Store, worker: &mut Worker, roots: &mut Vec<PathBuf>, timeout: Duration) -> Result<IndexSummary, IndexError> {
+fn index_once(store: &mut Store, worker: &mut Worker, roots: &mut Vec<PathBuf>, timeout: Duration, pdf_reader: bool) -> Result<IndexSummary, IndexError> {
     if roots.is_empty() {
         *roots = store.meta.roots()?.into_iter().map(PathBuf::from).collect();
     }
@@ -104,7 +104,17 @@ fn index_once(store: &mut Store, worker: &mut Worker, roots: &mut Vec<PathBuf>, 
         *roots = default_roots();
     }
     store.meta.set_roots(&to_strings(roots))?;
-    run_index(store, worker, roots, timeout)
+    run_index(store, worker, roots, timeout, pdf_reader)
+}
+
+/// 경로를 3개까지 보이고 나머지는 개수로.
+const SHOWN_DUPLICATE_PATHS: usize = 3;
+
+fn duplicate_line(others: &[String]) -> String {
+    let shown = others[..others.len().min(SHOWN_DUPLICATE_PATHS)].join(" | ");
+    let rest = others.len().saturating_sub(SHOWN_DUPLICATE_PATHS);
+    let more = if rest > 0 { format!(" 외 {rest}개") } else { String::new() };
+    format!("같은 내용 {}개 더: {shown}{more}", others.len())
 }
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -126,9 +136,15 @@ fn run(cli: Cli) -> Result<(), String> {
             let mut store = open_store(&home, &analyzers)?;
             // 지정한 루트(없으면 index_once 가 저장된 루트를 읽어 채운다). 다시 만들 때 이 값을 다시 저장한다.
             let mut roots: Vec<PathBuf> = root.iter().map(|r| absolute(r)).collect();
+            // PDF 읽기 도구를 이 프로세스에서 한 번 불러 본다(DLL 을 절대 경로로 읽기만 한다). 못 불러오면 PDF 는 기록하지 않고 건너뛴다.
+            // 워커에게 물어보는 방식보다 단순하고, 워커와 같은 경로·같은 불러오기 코드라 결과가 같다.
+            let pdf_reader = pdfium.as_deref().is_some_and(|p| extract::pdf::init(p).is_ok());
+            if !pdf_reader {
+                eprintln!("PDF 읽기 도구({})를 찾지 못해 PDF 는 이번에 건너뜁니다.", extract::pdf::LIB_NAME);
+            }
             let mut worker = Worker::new(worker_cmd(pdfium));
             let timeout = Duration::from_secs(cli.timeout_secs);
-            let s = match index_once(&mut store, &mut worker, &mut roots, timeout) {
+            let s = match index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader) {
                 // 열 때는 멀쩡했지만 루트 목록·색인 도중 meta.db 손상이 드러남 — 한 번만 처음부터 다시 만든다.
                 Err(IndexError::MetaCorrupt) => {
                     eprintln!();
@@ -136,16 +152,19 @@ fn run(cli: Cli) -> Result<(), String> {
                     drop(store);
                     reset_store(&home)?;
                     store = open_store(&home, &analyzers)?;
-                    index_once(&mut store, &mut worker, &mut roots, timeout).map_err(|e| e.to_string())?
+                    index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).map_err(|e| e.to_string())?
                 }
                 r => r.map_err(|e| e.to_string())?,
             };
             let mut line = format!(
-                "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 못 읽음 {}개(다시 시도 포함) · 접근 못 함 {}개",
+                "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 열 수 없는 파일 {}개(다시 시도 포함) · 접근 못 함 {}개",
                 s.scanned, s.changed, s.removed, s.extracted, s.reused, s.retried, s.failed, s.unreadable
             );
             if s.cloud_only > 0 {
                 line += &format!(" · 클라우드 전용이라 건너뜀 {}개", s.cloud_only);
+            }
+            if s.pdf_skipped > 0 {
+                line += &format!(" · PDF 건너뜀 {}개(다음에 다시)", s.pdf_skipped);
             }
             if s.changed_while_reading > 0 {
                 line += &format!(" · 읽는 중 바뀌어 다음에 다시 {}개", s.changed_while_reading);
@@ -162,7 +181,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 println!("{:>3}. {}  [{:.2}]", i + 1, h.title, h.score);
                 println!("     {}", h.paths[0]);
                 if h.paths.len() > 1 {
-                    println!("     같은 내용 {}개 더: {}", h.paths.len() - 1, h.paths[1..].join(" | "));
+                    println!("     {}", duplicate_line(&h.paths[1..]));
                 }
                 if let Some(f) = &h.fail {
                     println!("     ※ {}", fail_label(f));

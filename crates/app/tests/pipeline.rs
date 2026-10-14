@@ -28,7 +28,7 @@ fn resume_after_interrupted_flush_has_no_duplicates() {
     let a = Analyzers::load().unwrap();
     let mut store = open_store(&home, &a).unwrap();
     let mut w = real_worker();
-    run_index(&mut store, &mut w, &[docs.path().to_path_buf()], Duration::from_secs(30)).unwrap();
+    run_index(&mut store, &mut w, &[docs.path().to_path_buf()], Duration::from_secs(30), true).unwrap();
     assert_eq!(store.keyword.num_docs(), 2);
 
     // 키워드 커밋 뒤 meta 갱신 전에 죽은 상황: meta 는 모두 Pending 으로 남아 있다.
@@ -58,16 +58,16 @@ fn crashed_file_is_retried_once_on_next_run() {
         c.arg("--version");
         c
     });
-    let s = run_index(&mut store, &mut broken, &roots, Duration::from_secs(30)).unwrap();
+    let s = run_index(&mut store, &mut broken, &roots, Duration::from_secs(30), true).unwrap();
     assert_eq!((s.extracted, s.failed), (1, 1));
     assert!(search(&store, "렛츠런파크", 10).unwrap().is_empty());
 
     let mut w = real_worker();
-    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30)).unwrap();
+    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30), true).unwrap();
     assert_eq!((s.changed, s.retried, s.failed), (0, 1, 0), "{s:?}");
     assert_eq!(search(&store, "렛츠런파크", 10).unwrap().len(), 1);
 
-    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30)).unwrap();
+    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30), true).unwrap();
     assert_eq!(s.retried, 0, "재시도는 한 번뿐");
 }
 
@@ -87,11 +87,11 @@ fn moving_many_files_reuses_all_contents() {
     let mut store = open_store(&home, &a).unwrap();
     let mut w = real_worker();
     let roots = [docs.path().to_path_buf()];
-    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30)).unwrap();
+    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30), true).unwrap();
     assert_eq!(s.extracted, n);
 
     std::fs::rename(docs.path().join("old"), docs.path().join("new")).unwrap();
-    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30)).unwrap();
+    let s = run_index(&mut store, &mut w, &roots, Duration::from_secs(30), true).unwrap();
     assert_eq!((s.changed, s.removed, s.reused, s.extracted), (n, n, n, 0), "{s:?}");
     assert_eq!(store.keyword.num_docs(), n as u64);
     assert_eq!(store.meta.counts().unwrap().contents, n as u64);
@@ -107,7 +107,7 @@ fn keyword_index_ahead_of_meta_is_rebuilt() {
     let home = Home::new(home_dir.path());
     let a = Analyzers::load().unwrap();
     let mut store = open_store(&home, &a).unwrap();
-    run_index(&mut store, &mut real_worker(), &[docs.path().to_path_buf()], Duration::from_secs(30)).unwrap();
+    run_index(&mut store, &mut real_worker(), &[docs.path().to_path_buf()], Duration::from_secs(30), true).unwrap();
     assert_eq!(store.keyword.num_docs(), 1);
     drop(store);
     for f in ["data/meta.db", "data/meta.db-wal", "data/meta.db-shm", "keys/meta.key"] {
@@ -136,12 +136,35 @@ fn retry_skips_file_changed_since_recorded() {
         c.arg("--version");
         c
     });
-    run_index(&mut store, &mut broken, &roots, Duration::from_secs(30)).unwrap();
+    run_index(&mut store, &mut broken, &roots, Duration::from_secs(30), true).unwrap();
     // 내용을 바꾸고(크기가 달라짐) 읽지 못하게 한다.
     std::fs::copy(fixtures().join("office/sample.odt"), &p).unwrap();
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let s = run_index(&mut store, &mut real_worker(), &roots, Duration::from_secs(30));
+    let s = run_index(&mut store, &mut real_worker(), &roots, Duration::from_secs(30), true);
     std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
     let s = s.unwrap();
     assert_eq!((s.changed, s.unreadable, s.retried), (1, 1, 0), "{s:?}");
+}
+
+/// 아주 큰 TXT(약 30MB): 워커가 글자를 MAX_DOC_CHARS 에서 잘라 보내므로 meta.db 에 저장되는 문서 JSON 도 묶인다
+/// (고치기 전 90MB TXT 하나에 meta.db +97MB, 앱 743MB).
+#[test]
+fn huge_txt_is_stored_capped() {
+    let docs = tempfile::tempdir().unwrap();
+    let body = "한국마사회 경마 시행 계획 보고 문서 본문 줄입니다\n".repeat(30 * 1024 * 1024 / 75);
+    std::fs::write(docs.path().join("큰로그.txt"), &body).unwrap();
+    drop(body);
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Home::new(home_dir.path());
+    let a = Analyzers::load().unwrap();
+    let mut store = open_store(&home, &a).unwrap();
+    let s = run_index(&mut store, &mut real_worker(), &[docs.path().to_path_buf()], Duration::from_secs(60), true).unwrap();
+    assert_eq!((s.extracted, s.failed), (1, 0), "{s:?}");
+    let hit = &search(&store, "렛츠런파크 경마", 5).unwrap()[0];
+    let doc = store.meta.doc(hit.content_id).unwrap().unwrap();
+    let chars: usize = doc.blocks.iter().map(|b| b.text.chars().count()).sum();
+    assert!(chars <= extract::MAX_DOC_CHARS, "{chars}");
+    // 한글 3바이트 × 500만 자 + JSON 껍데기
+    let json = serde_json::to_string(&doc).unwrap().len();
+    assert!(json <= extract::MAX_DOC_CHARS * 3 + 1024 * 1024, "{json}");
 }

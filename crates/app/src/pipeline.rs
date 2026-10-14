@@ -29,6 +29,8 @@ pub struct IndexSummary {
     pub retried: usize,
     pub cloud_only: usize,
     pub changed_while_reading: usize,
+    /// PDF 읽기 도구(pdfium)가 없어 기록하지 않고 건너뛴 PDF — 다음 `index` 에서 다시 본다.
+    pub pdf_skipped: usize,
 }
 
 /// 색인 오류. `MetaCorrupt` 는 meta.db 쪽 손상(키 불일치·페이지 손상) — 열 때가 아니라 도중에 드러날 수 있어
@@ -80,11 +82,17 @@ fn extract(worker: &mut Worker, path: &Path, size: u64, timeout: Duration) -> Co
     content_data(worker.extract(path, timeout))
 }
 
+fn is_pdf(p: &Path) -> bool {
+    extract::format::Format::from_path(p) == Some(extract::format::Format::Pdf)
+}
+
 fn file_name(p: &str) -> String {
     Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p).to_string()
 }
 
-pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], timeout: Duration) -> Result<IndexSummary, IndexError> {
+/// `pdf_reader`: PDF 읽기 도구(pdfium)를 불러올 수 있는가. 아니면 PDF 는 meta 에 아무것도 기록하지 않고 건너뛴다
+/// — 기록하면 "열 수 없는 파일"(Unsupported, 재시도 없음)로 굳어 도구가 돌아와도 파일이 바뀔 때까지 다시 읽지 않는다.
+pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], timeout: Duration, pdf_reader: bool) -> Result<IndexSummary, IndexError> {
     let report = crawler::scan(roots, &crawler::ScanOptions::default());
     let known = store.meta.known_files()?;
     // 사라진 루트·잠깐 못 읽은 폴더·클라우드 전용 파일 아래의 경로는 지운 것으로 보지 않는다(DEC-040).
@@ -104,6 +112,10 @@ pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], time
     for (i, f) in diff.changed.iter().enumerate() {
         eprint!("\r문서 읽는 중 {}/{}", i + 1, diff.changed.len());
         let p = Path::new(&f.path);
+        if !pdf_reader && is_pdf(p) {
+            s.pdf_skipped += 1;
+            continue;
+        }
         // 다른 프로그램이 잠갔거나 사라진 파일 — 기록하지 않으므로 다음 실행의 diff 에 다시 나온다.
         let Some(before) = crawler::stat(p) else {
             s.unreadable += 1;
@@ -156,6 +168,9 @@ pub fn run_index(store: &mut Store, worker: &mut Worker, roots: &[PathBuf], time
             continue;
         }
         let p = Path::new(&f.path);
+        if !pdf_reader && is_pdf(p) {
+            continue; // 재시도 기회를 쓰지 않고 다음 실행으로 미룬다
+        }
         let Some(before) = crawler::stat(p) else { continue };
         let d = extract(worker, p, before.0, timeout);
         if crawler::stat(p) != Some(before) {
