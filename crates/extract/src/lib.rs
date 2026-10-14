@@ -8,6 +8,7 @@ pub mod magic;
 pub(crate) mod norm;
 pub mod pdf;
 pub mod runner;
+pub mod worker;
 pub(crate) mod table;
 mod odf;
 mod ooxml;
