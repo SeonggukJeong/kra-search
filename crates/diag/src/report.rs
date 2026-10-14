@@ -82,6 +82,12 @@ pub struct ExtractInfo {
     pub not_container: usize,
     pub timeout: usize,
     pub crashed: usize,
+    #[serde(default)]
+    pub too_large: usize,
+    #[serde(default)]
+    pub no_text: usize,
+    #[serde(default)]
+    pub unreadable: usize,
     pub not_container_magic_top: Vec<(String, usize)>,
     pub tokens_per_1k_chars_median: Option<f64>,
     pub chunks_per_doc_p50: Option<f64>,

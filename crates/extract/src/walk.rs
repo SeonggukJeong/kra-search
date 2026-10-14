@@ -43,14 +43,7 @@ fn collect_headings(nodes: &[StructureNode], out: &mut HashSet<(usize, usize)>) 
     }
 }
 
-fn is_private_use(c: char) -> bool {
-    matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
-}
-
-/// 한컴 전용 글자(PUA) 제거, 연속 공백 정리.
-pub(crate) fn clean(s: &str) -> String {
-    s.chars().map(|c| if is_private_use(c) { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
-}
+use crate::norm::clean;
 
 fn push_text(out: &mut Vec<Block>, kind: BlockKind, text: &str) {
     let t = clean(text);

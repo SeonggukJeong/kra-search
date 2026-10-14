@@ -106,6 +106,9 @@ fn clone_counts(x: &ExtractInfo) -> ExtractInfo {
         not_container: x.not_container,
         timeout: x.timeout,
         crashed: x.crashed,
+        too_large: x.too_large,
+        no_text: x.no_text,
+        unreadable: x.unreadable,
         ..Default::default()
     }
 }
@@ -148,7 +151,7 @@ pub fn run_with(
         eprint!("\r문서 확인 중 {}/{}", i + 1, files.len());
         let measure = i % stride == 0 && std::fs::metadata(f).is_ok_and(|m| m.len() <= COVERAGE_MAX_BYTES);
         match extract(f, measure) {
-            Outcome::Ok { doc, distribution, coverage } => {
+            Outcome::Ok { doc, distribution, coverage, .. } => {
                 a.x.ok += 1;
                 if let Some(c) = coverage {
                     a.coverages.push(c as f64);
@@ -172,6 +175,9 @@ pub fn run_with(
                 FailKind::Drm => a.x.drm += 1,
                 FailKind::Corrupt => a.x.corrupt += 1,
                 FailKind::Unsupported => a.x.unsupported += 1,
+                FailKind::TooLarge => a.x.too_large += 1,
+                FailKind::NoText => a.x.no_text += 1,
+                FailKind::Unreadable => a.x.unreadable += 1,
                 FailKind::NotContainer => {
                     a.x.not_container += 1;
                     *a.magics.entry(extract::magic::report_label(&magic)).or_default() += 1;
@@ -217,7 +223,7 @@ mod tests {
         let fake = |p: &std::path::Path, measure: bool| {
             requested.set(requested.get() + measure as usize);
             let c: f32 = std::fs::read_to_string(p).unwrap().parse().unwrap();
-            extract::runner::Outcome::Ok { doc: doc::Document { title: None, blocks: vec![] }, distribution: false, coverage: measure.then_some(c) }
+            extract::runner::Outcome::Ok { doc: doc::Document { title: None, blocks: vec![] }, distribution: false, coverage: measure.then_some(c), stats: Default::default() }
         };
         let x = super::run_with(&[dir], None, &fake, 0, &mut |_| {});
         assert_eq!(requested.get(), 4, "적은 문서는 모두 측정한다");

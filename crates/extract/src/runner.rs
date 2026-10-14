@@ -1,6 +1,6 @@
 //! 추출을 별도 프로세스에서 실행해 파서의 멈춤·비정상 종료를 격리한다.
 
-use crate::hwp::FailKind;
+use crate::{FailKind, Stats};
 use doc::Document;
 use std::io::Read;
 use std::path::Path;
@@ -16,6 +16,8 @@ pub enum Outcome {
         distribution: bool,
         #[serde(default)]
         coverage: Option<f32>,
+        #[serde(default)]
+        stats: Stats,
     },
     Failed { kind: FailKind, magic: String },
     Timeout,

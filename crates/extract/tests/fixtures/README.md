@@ -9,6 +9,7 @@ rhwp 저장소(https://github.com/edwardkim/rhwp, MIT, rev 1a76570) `samples/`�
 | form.hwp | 복학원서.hwp |
 | table-text.hwpx | 표-텍스트.hwpx |
 | distribution.hwpx | task1768/distribution_doc.hwpx (배포용 플래그, 서울 정보소통광장 공개 결재문서) |
+| formatting_table.hml | samples/hml/formatting_table.hml (HWPML 2.91, KI-010 시험) |
 
 직접 만든 파일:
 - corrupt.hwp — form.hwp 앞 4KB만 자른 손상 파일
