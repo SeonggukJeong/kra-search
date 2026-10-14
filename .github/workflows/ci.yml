@@ -17,6 +17,14 @@ jobs:
       - name: fetch pdfium (pinned, SHA-256)
         shell: bash
         run: bash tools/fetch-pdfium.sh
+      - name: cache ko-dic (lindera dictionary source + build cache)
+        uses: actions/cache@v4
+        with:
+          path: third_party/ko-dic
+          key: ko-dic-${{ runner.os }}-${{ hashFiles('tools/fetch-ko-dic.sh', 'Cargo.lock') }}
+      - name: fetch ko-dic (pinned, SHA-256)
+        shell: bash
+        run: bash tools/fetch-ko-dic.sh
       - name: libclang (windows)
         if: runner.os == 'Windows'
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
@@ -50,3 +58,6 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash tools/fetch-rhwp.sh
       - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: no HTTP crates in runtime dependency graph
+        run: bash tools/check-no-net.sh

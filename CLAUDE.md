@@ -31,6 +31,7 @@
 bash tools/fetch-rhwp.sh          # rhwp 소스(third_party/rhwp)
 bash tools/fetch-pdfium.sh        # PDF 추출 엔진(third_party/pdfium, 시험에 필요)
 bash tools/fetch-models.sh        # 개발용 GGUF(models/)
+bash tools/fetch-ko-dic.sh         # 한국어 형태소 사전 원본(third_party/ko-dic, 빌드에 필요)
 cargo test --workspace --release
 cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1
 cargo test -p diag --release --test memory -- --include-ignored --test-threads 1

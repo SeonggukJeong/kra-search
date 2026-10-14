@@ -1,2 +1,6 @@
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[env]
+# lindera 한국어 사전 빌드 캐시(tools/fetch-ko-dic.sh 가 채움). 저장소 루트 기준 경로.
+LINDERA_BUILD_DICTIONARY_CACHE_DIR = { value = "third_party/ko-dic", relative = true }
