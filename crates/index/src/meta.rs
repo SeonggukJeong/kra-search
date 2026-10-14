@@ -116,8 +116,8 @@ fn state_of(v: i64) -> State {
 
 fn content_row(r: &rusqlite::Row) -> rusqlite::Result<Content> {
     let hash: Vec<u8> = r.get(1)?;
-    let mut h = [0u8; 16];
-    h.copy_from_slice(&hash[..16.min(hash.len())]);
+    // 16바이트가 아니면 손상된 행 — panic 대신 오류로 올린다.
+    let h = <[u8; 16]>::try_from(&hash[..]).map_err(|_| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Blob, "해시 길이가 16바이트가 아님".into()))?;
     Ok(Content {
         id: r.get(0)?,
         hash: u128::from_le_bytes(h),
@@ -146,17 +146,19 @@ impl Meta {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.execute_batch(SCHEMA)?;
-        let m = Meta { conn };
-        let v: Option<String> = m.conn.query_row("SELECT value FROM kv WHERE key='schema'", [], |r| r.get(0)).optional()?;
+        // 스키마 버전을 먼저 확인한다 — 미래 버전 DB 에 현재 SCHEMA 를 적용하다 "no such column" 으로 매번 실패하지 않고 다시 색인하게.
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
+        let v: Option<String> = conn.query_row("SELECT value FROM kv WHERE key='schema'", [], |r| r.get(0)).optional()?;
         match v.as_deref() {
-            None => {
-                m.conn.execute("INSERT INTO kv(key, value) VALUES('schema', ?1)", [SCHEMA_VERSION])?;
-            }
-            Some(SCHEMA_VERSION) => {}
             // 다른 스키마 = 다른 버전의 앱이 만든 색인 → 다시 색인(스펙 §6.8)
-            Some(_) => return Err(MetaError::WrongKeyOrCorrupt),
+            Some(x) if x != SCHEMA_VERSION => return Err(MetaError::WrongKeyOrCorrupt),
+            _ => {}
         }
+        conn.execute_batch(SCHEMA)?;
+        if v.is_none() {
+            conn.execute("INSERT INTO kv(key, value) VALUES('schema', ?1)", [SCHEMA_VERSION])?;
+        }
+        let m = Meta { conn };
         Ok(m)
     }
 
@@ -264,7 +266,13 @@ impl Meta {
 
     pub fn doc(&self, content_id: i64) -> Result<Option<doc::Document>> {
         let s: Option<Option<String>> = self.conn.query_row("SELECT doc FROM content WHERE id = ?1", [content_id], |r| r.get(0)).optional()?;
-        Ok(s.flatten().and_then(|j| serde_json::from_str(&j).ok()))
+        match s.flatten() {
+            None => Ok(None),
+            // 손상·비호환 JSON 을 조용히 "본문 없음"으로 바꾸면 파일명만 색인된다 — 오류로 올린다.
+            Some(j) => serde_json::from_str(&j).map(Some).map_err(|e| {
+                MetaError::Sql(rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+            }),
+        }
     }
 
     pub fn files_of(&self, content_id: i64) -> Result<Vec<FileRow>> {
@@ -425,5 +433,30 @@ mod tests {
         let mut m = Meta::open(&dir.path().join("meta.db"), &[3u8; 32]).unwrap();
         m.set_roots(&["/b".into(), "/a".into(), "/a".into()]).unwrap();
         assert_eq!(m.roots().unwrap(), vec!["/a".to_string(), "/b".to_string()]);
+    }
+
+    #[test]
+    fn other_schema_version_means_rebuild_before_schema_is_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("meta.db");
+        let key = [5u8; 32];
+        drop(Meta::open(&p, &key).unwrap());
+        {
+            let conn = Connection::open(&p).unwrap();
+            conn.pragma_update(None, "key", format!("x'{}'", hex(&key))).unwrap();
+            conn.execute("UPDATE kv SET value = '2' WHERE key = 'schema'", []).unwrap();
+        }
+        assert!(matches!(Meta::open(&p, &key), Err(MetaError::WrongKeyOrCorrupt)));
+    }
+
+    #[test]
+    fn damaged_rows_are_errors_not_panics_or_silent_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut m = Meta::open(&dir.path().join("meta.db"), &[6u8; 32]).unwrap();
+        let id = m.insert_content(1, &data("가")).unwrap();
+        m.conn.execute("UPDATE content SET doc = '{깨짐' WHERE id = ?1", [id]).unwrap();
+        assert!(matches!(m.doc(id), Err(MetaError::Sql(_))));
+        m.conn.execute("UPDATE content SET hash = x'0102' WHERE id = ?1", [id]).unwrap();
+        assert!(matches!(m.content(id), Err(MetaError::Sql(_))));
     }
 }
