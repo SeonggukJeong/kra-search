@@ -45,7 +45,8 @@ fn parser_stdout_noise_does_not_break_protocol() {
     let p = dir.path().join("__noise__");
     std::fs::write(&p, b"x").unwrap();
     // 확장자가 없어 Unsupported 로 실패하지만, 응답 자체는 제대로 받아야 한다(시간 초과 아님).
-    assert!(matches!(w.extract(&p, Duration::from_secs(5)), Outcome::Failed { .. }));
+    // 시간 제한에는 워커 기동이 포함된다(Windows CI 에서 Defender 가 새 exe 를 몇 초 검사할 수 있음). "시간 초과 아님"을 확인하는 시험이라 넉넉히 둔다.
+    assert!(matches!(w.extract(&p, Duration::from_secs(30)), Outcome::Failed { .. }));
     assert_eq!(w.restarts(), 0);
 }
 
@@ -56,7 +57,8 @@ fn non_utf8_stdout_noise_is_not_a_crash() {
     let p = dir.path().join("__binnoise__");
     std::fs::write(&p, b"x").unwrap();
     // UTF-8 이 아닌 잡음 줄이 섞여도 읽기 스레드가 끝나지 않아야 한다(Crashed 로 오인하면 안 됨).
-    assert!(matches!(w.extract(&p, Duration::from_secs(5)), Outcome::Failed { .. }));
+    // 시간 제한에는 워커 기동이 포함된다(Windows CI 에서 Defender 가 새 exe 를 몇 초 검사할 수 있음). "시간 초과 아님"을 확인하는 시험이라 넉넉히 둔다.
+    assert!(matches!(w.extract(&p, Duration::from_secs(30)), Outcome::Failed { .. }));
     assert_eq!(w.restarts(), 0);
     assert!(is_ok(&w.extract(&fx("schedule.hwp"), Duration::from_secs(30))), "같은 워커로 다음 파일 정상");
     assert_eq!(w.restarts(), 0);
