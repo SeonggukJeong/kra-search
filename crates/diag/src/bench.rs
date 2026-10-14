@@ -4,7 +4,7 @@ use crate::report::{BenchInfo, FlatBench, ModelBench};
 use embed::chunk::{build_chunks, ChunkParams};
 use embed::engine::{EmbedError, Embedder, EngineOptions};
 use embed::profile::ModelProfile;
-use index::flat::FlatIndex;
+use vector::flat::FlatIndex;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use sysinfo::{ProcessesToUpdate, System};

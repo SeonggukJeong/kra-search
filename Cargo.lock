@@ -581,12 +581,12 @@ dependencies = [
  "doc",
  "embed",
  "extract",
- "index",
  "serde",
  "serde_json",
  "sha2",
  "sysinfo",
  "time",
+ "vector",
  "wait-timeout",
  "windows",
  "wmi",
@@ -659,6 +659,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "vector",
 ]
 
 [[package]]
@@ -1019,9 +1020,6 @@ checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
 [[package]]
 name = "index"
 version = "0.0.1"
-dependencies = [
- "embed",
-]
 
 [[package]]
 name = "indexmap"
@@ -1162,10 +1160,10 @@ dependencies = [
  "doc",
  "embed",
  "extract",
- "index",
  "serde",
  "serde_json",
  "toml",
+ "vector",
 ]
 
 [[package]]
@@ -2390,6 +2388,10 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
 ]
+
+[[package]]
+name = "vector"
+version = "0.0.1"
 
 [[package]]
 name = "version_check"
