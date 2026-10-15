@@ -3,6 +3,7 @@
 mod cache;
 mod corpus;
 mod experiments;
+mod hybrid;
 mod keyword;
 mod metrics;
 
@@ -25,6 +26,24 @@ struct Args {
     keyword: bool,
     #[arg(long, default_value_t = 8)]
     threads: usize,
+    /// M2 하이브리드 평가(docs/m2/eval-hybrid.md · docs/m2/params.json)
+    #[arg(long)]
+    hybrid: bool,
+    /// M2 실험 모델
+    #[arg(long, default_value = "models/embeddinggemma-2-Q8_0.gguf")]
+    model: PathBuf,
+    /// 기준 시점(날짜 표현 해석)
+    #[arg(long, default_value = "2026-10-15")]
+    now: String,
+    /// 매개변수를 고르지 않고 이 JSON 을 쓴다
+    #[arg(long)]
+    params: Option<PathBuf>,
+    /// 질의별 순위 JSON 저장
+    #[arg(long)]
+    dump: Option<PathBuf>,
+    /// 앱 `kra-search eval --dump` 결과와 비교(일치 검사)
+    #[arg(long)]
+    parity: Option<PathBuf>,
 }
 
 fn main() {
@@ -37,13 +56,35 @@ fn main() {
         queries.extend(corpus::load_queries(dir));
     }
     eprintln!("문서 {} (실패 {}), 질의 {}", docs.len(), failed.len(), queries.len());
-    for (id, why) in &failed {
-        eprintln!("추출 실패: {id} {why}");
+    for f in &failed {
+        eprintln!("추출 실패: {} {}", f.id, f.why);
     }
     if a.keyword {
         let out = a.out.clone().unwrap_or_else(|| PathBuf::from("docs/m1/eval-keyword.md"));
         std::fs::write(&out, keyword::report(&docs, &queries)).unwrap();
         eprintln!("저장: {}", out.display());
+        return;
+    }
+    if a.hybrid || a.parity.is_some() {
+        let now = query::calendar::parse_ymd(&a.now).expect("--now YYYY-MM-DD");
+        // 어떤 파일보다 먼저 만든다(일치 검사 경로 포함, P17).
+        std::fs::create_dir_all("docs/m2").unwrap();
+        let w = hybrid::build(&docs, &failed, &queries, &hybrid::HArgs { model: a.model.clone(), threads: a.threads, now });
+        if let Some(app) = &a.parity {
+            let (report, pass) = hybrid::parity(&w, &queries, app);
+            std::fs::write("docs/m2/parity.md", &report).unwrap();
+            eprintln!("{report}");
+            std::process::exit(if pass { 0 } else { 1 });
+        }
+        let fixed = a.params.as_ref().map(|p| serde_json::from_str(&std::fs::read_to_string(p).unwrap()).expect("params JSON"));
+        let o = hybrid::run(&w, &queries, fixed);
+        let out = a.out.clone().unwrap_or_else(|| PathBuf::from("docs/m2/eval-hybrid.md"));
+        std::fs::write(&out, &o.report).unwrap();
+        std::fs::write("docs/m2/params.json", serde_json::to_string_pretty(&o.params).unwrap() + "\n").unwrap();
+        if let Some(d) = &a.dump {
+            std::fs::write(d, serde_json::to_string(&o.ranks).unwrap()).unwrap();
+        }
+        eprintln!("저장: {} · 카드 상한 결정 {}", out.display(), o.cap);
         return;
     }
     let mut models: Vec<PathBuf> = std::fs::read_dir(&a.models)
@@ -66,7 +107,7 @@ fn main() {
     writeln!(s, "# M0 개발 PC 평가 결과 (자동 생성: `cargo run -p m0eval --release`)\n").unwrap();
     let sets = a.eval.iter().map(|p| format!("`{}`", p.display())).collect::<Vec<_>>().join(" + ");
     writeln!(s, "- 말뭉치: {sets} 문서 {}건(추출 실패 {}건: {}), 질의 {}개", docs.len(), failed.len(),
-        failed.iter().map(|f| format!("{} {}", f.0, f.1)).collect::<Vec<_>>().join(", "), queries.len()).unwrap();
+        failed.iter().map(|f| format!("{} {}", f.id, f.why)).collect::<Vec<_>>().join(", "), queries.len()).unwrap();
     writeln!(s, "- 실행: {} · 스레드 {}\n", std::env::consts::ARCH, a.threads).unwrap();
     writeln!(s, "## 1. 검색 품질 (의미 검색 단독, nDCG@10 내림차순)\n").unwrap();
     writeln!(s, "{}", experiments::quality_table(&runs, &queries)).unwrap();
