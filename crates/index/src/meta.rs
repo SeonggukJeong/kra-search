@@ -442,6 +442,24 @@ impl Meta {
         Ok(v)
     }
 
+    /// 모든 경로(평가: 정답 파일 이름으로 내용을 찾는다).
+    pub fn all_files(&self) -> Result<Vec<FileRow>> {
+        let mut st = self
+            .conn
+            .prepare("SELECT path, size, mtime_ns, content_id FROM file ORDER BY path")?;
+        let v = st
+            .query_map([], |r| {
+                Ok(FileRow {
+                    path: r.get(0)?,
+                    size: r.get::<_, i64>(1)? as u64,
+                    mtime_ns: r.get(2)?,
+                    content_id: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(v)
+    }
+
     pub fn retry_candidates(&self) -> Result<Vec<(i64, String)>> {
         let mut st = self.conn.prepare_cached(
             "SELECT id, p FROM (
@@ -1130,6 +1148,22 @@ mod tests {
         assert!(m.live_slots(VecKind::Cards).unwrap().is_empty());
         assert_eq!(m.kv("cards_len").unwrap().as_deref(), Some("0"));
         assert_eq!(m.card_todo().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn all_files_lists_every_path_in_path_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut m = Meta::open(&dir.path().join("meta.db"), &[16u8; 32]).unwrap();
+        let a = m.insert_content(1, &data("가")).unwrap();
+        let b = m.insert_content(2, &data("나")).unwrap();
+        m.upsert_file("/d/b.hwp", 2, 20, b).unwrap();
+        m.upsert_file("/d/a.hwp", 1, 10, a).unwrap();
+        m.upsert_file("/d/a-복사본.hwp", 1, 30, a).unwrap();
+        let v = m.all_files().unwrap();
+        assert_eq!(
+            v.iter().map(|f| (f.path.as_str(), f.content_id)).collect::<Vec<_>>(),
+            vec![("/d/a-복사본.hwp", Some(a)), ("/d/a.hwp", Some(a)), ("/d/b.hwp", Some(b))]
+        );
     }
 
     #[test]

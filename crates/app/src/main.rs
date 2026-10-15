@@ -335,8 +335,43 @@ fn run(cli: Cli) -> Result<(), String> {
                 if let Some(d) = dump {
                     std::fs::write(d, serde_json::to_string(&ranks).expect("json")).map_err(|e| format!("{}: {e}", d.display()))?;
                 }
-            } else if queries.is_some() {
-                return Err("--queries 는 아직 지원하지 않습니다(Task 18).".into());
+            } else if let Some(tsv) = queries {
+                // 내 색인을 그대로 읽는다 — 색인을 만들거나 바꾸지 않는다(그래서 기본 위치 거절·데이터 뒷부분 강제도 없다).
+                let store = open_store_readonly(&home, &analyzers)?;
+                let bytes = std::fs::read(tsv).map_err(|e| format!("질의 파일을 읽지 못했습니다: {e}"))?;
+                let text = String::from_utf8(bytes).map_err(|_| "질의 파일을 UTF-8 로 저장해 주세요(메모장: 다른 이름으로 저장 → 인코딩 UTF-8).".to_string())?;
+                let qs = app::eval::read_user_queries(&text);
+                if qs.is_empty() {
+                    return Err("질의가 없습니다 — 한 줄에 `질의<탭>정답 파일 이름`".into());
+                }
+                let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
+                let t = Instant::now();
+                // --set 과 같은 확인: 모델을 불러오지 못한 채 키워드 숫자를 하이브리드로 내지 않는다.
+                let mut s = eval_searcher(&cli, &home, &store, *keyword_only)?;
+                let model_ms = t.elapsed().as_secs_f64() * 1000.0;
+                let rs = app::eval::run_user_queries(&store, &mut s, &qs, today(&cli.now)?)?;
+                let me = |e: index::meta::MetaError| IndexError::from(e).to_string();
+                let c = store.meta.counts().map_err(me)?;
+                let mut stats = Vec::new();
+                for (k, label) in [("stat_keyword_secs", "키워드 검색 색인(초)"), ("stat_cards_secs", "빠른 의미 검색 색인(초)"), ("stat_body_secs", "정밀 의미 검색 색인(초)"), ("stat_threads", "색인 스레드")] {
+                    if let Some(v) = store.meta.kv(k).map_err(me)? {
+                        stats.push((label.to_string(), v));
+                    }
+                }
+                let ix = app::eval::IndexInfo { files: c.files, contents: c.contents, failed: c.failed, embed: store.meta.embed_counts(embed::plan::DATA_HEAD).map_err(me)?, stats };
+                let split = platform::cpu::core_split();
+                let pc = app::eval::PcInfo {
+                    perf: split.map(|x| x.0),
+                    eff: split.map(|x| x.1),
+                    logical: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
+                    threads,
+                };
+                let report = app::eval::user_report(&rs, &ix, &pc, model_ms);
+                let path = out.clone().unwrap_or_else(|| PathBuf::from("kra-search-eval-report.txt"));
+                std::fs::write(&path, &report).map_err(|e| format!("보고서를 쓰지 못했습니다: {e}"))?;
+                println!("{report}");
+                // 경로는 이 PC 화면에만 나온다 — 보고서 파일에는 없다.
+                eprintln!("보고서: {}", path.display());
             } else {
                 return Err("--set 또는 --queries 를 주세요.".into());
             }
