@@ -301,6 +301,11 @@ fn fp_rate(per: &Per, qs: &[&Query]) -> f64 {
     fp_hits(per, qs) as f64 / qs.len().max(1) as f64
 }
 
+/// 질의를 날짜 칩이 있는 것과 없는 것으로 가른다(스펙 §1 "날짜 표현 없는 질의").
+fn split_by_chip<'a>(qs: &[&'a Query], has_chip: impl Fn(&Query) -> bool) -> (Vec<&'a Query>, Vec<&'a Query>) {
+    qs.iter().copied().partition(|q| has_chip(q))
+}
+
 fn pct(x: f64) -> String {
     format!("{:.1}%", x * 100.0)
 }
@@ -651,20 +656,52 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
         }
     )
     .unwrap();
-    let non_date_h: Vec<&Query> = hold.iter().copied().filter(|q| q.kind != "date").collect();
-    let non_date: Vec<&Query> = all.iter().copied().filter(|q| q.kind != "date").collect();
+    // 스펙 §1: "날짜 표현이 없는 질의는 떨어지지 않을 것" — 질의 유형이 아니라 날짜 칩이 있는지로 가른다.
+    let has_chip = |q: &Query| query::parse(&q.text, w.now, &w.table).chips().next().is_some();
+    let (_, non_date_h) = split_by_chip(&hold, has_chip);
+    let (chip_h, _) = split_by_chip(&hold, has_chip);
+    let (chip_all, non_date) = split_by_chip(&all, has_chip);
     let (nd_on, nd_off) = (macro_ndcg(&per[3], &non_date_h), macro_ndcg(&per[4], &non_date_h));
     // 허용 폭 0.003 은 숫자 규칙이다(P20) — 나중에 DEC 로 기록한다.
     writeln!(
         s,
-        "| 날짜 없는 질의가 떨어지지 않음(매크로, 허용 0.003) | {nd_on:.4} vs {nd_off:.4} · 첫 페이지 {} vs {} | {:.4} vs {:.4} | {} |",
+        "| 날짜 표현 없는 질의가 떨어지지 않음(날짜 칩 없음, 매크로, 허용 0.003) | {nd_on:.4} vs {nd_off:.4} · 첫 페이지 {} vs {} (검증용 {}개) | {:.4} vs {:.4} (전체 {}개) | {} |",
         pct(fp_rate(&per[3], &non_date_h)),
         pct(fp_rate(&per[4], &non_date_h)),
+        non_date_h.len(),
         macro_ndcg(&per[3], &non_date),
         macro_ndcg(&per[4], &non_date),
+        non_date.len(),
         if nd_on + 0.003 >= nd_off { "통과" } else { "**실패**" }
     )
     .unwrap();
+    // 보고만 한다(판정 아님): 날짜 칩이 있는 date 유형 밖 질의 — "작년 매출액"처럼 표현이 내용의 시기를 뜻하는 것들.
+    let chip_other_h: Vec<&Query> = chip_h.iter().copied().filter(|q| q.kind != "date").collect();
+    let chip_other: Vec<&Query> = chip_all.iter().copied().filter(|q| q.kind != "date").collect();
+    writeln!(
+        s,
+        "| (참고, 판정 아님) 날짜 표현이 있는 비-date 질의(내용 시기 등) | 검증용 {}개: {:.4} vs {:.4} · 첫 페이지 {} vs {} | 전체 {}개: {:.4} vs {:.4} · 첫 페이지 {} vs {} | - |",
+        chip_other_h.len(),
+        macro_ndcg(&per[3], &chip_other_h),
+        macro_ndcg(&per[4], &chip_other_h),
+        pct(fp_rate(&per[3], &chip_other_h)),
+        pct(fp_rate(&per[4], &chip_other_h)),
+        chip_other.len(),
+        macro_ndcg(&per[3], &chip_other),
+        macro_ndcg(&per[4], &chip_other),
+        pct(fp_rate(&per[3], &chip_other)),
+        pct(fp_rate(&per[4], &chip_other)),
+    )
+    .unwrap();
+    let changed: Vec<String> = chip_other
+        .iter()
+        .filter(|q| per[3][&q.qid].2 != per[4][&q.qid].2)
+        .map(|q| {
+            let r = |p: &Per| p[&q.qid].2.map_or("밖".to_string(), |x| x.to_string());
+            format!("{}({}): {}→{}", q.qid, q.kind, r(&per[4]), r(&per[3]))
+        })
+        .collect();
+    writeln!(s, "\n- 날짜 표현이 있는 비-date 질의 중 첫 정답 순위가 바뀐 것(끔→켬): {}", if changed.is_empty() { "없음".to_string() } else { changed.join(" · ") }).unwrap();
     writeln!(s).unwrap();
 
     writeln!(s, "## 2. 유형별 nDCG@10 (유형 열은 전체 질의, 참고)\n").unwrap();
@@ -854,6 +891,19 @@ pub fn parity(w: &World, queries: &[Query], app_dump: &Path) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queries_split_by_date_chip() {
+        let t = query::DateTable::builtin();
+        let today = query::calendar::parse_ymd("2026-10-15").unwrap();
+        let mk = |id: &str, text: &str, kind: &str| Query { qid: id.into(), text: text.into(), kind: kind.into(), relevant: Default::default() };
+        let qs = [mk("a", "작년 매출액", "kra"), mk("b", "내부통제 규정", "kra"), mk("c", "내년 경마시행계획", "date")];
+        let refs: Vec<&Query> = qs.iter().collect();
+        let (with, without) = split_by_chip(&refs, |q| query::parse(&q.text, today, &t).chips().next().is_some());
+        // 미래 표현("내년")은 칩이 아니므로 칩 없음 쪽이다.
+        assert_eq!(with.iter().map(|q| q.qid.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(without.iter().map(|q| q.qid.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+    }
 
     fn hd(id: &str, set: &str, file: &str, date: Option<&str>) -> HDoc {
         HDoc { id: id.into(), set: set.into(), file: file.into(), ext: "hwp".into(), date: date.and_then(query::calendar::parse_ymd), doc: None }
