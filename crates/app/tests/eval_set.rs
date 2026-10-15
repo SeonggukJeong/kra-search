@@ -154,3 +154,53 @@ fn eval_set_requires_model_and_home() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--home"));
 }
+
+/// 모델 파일은 있지만 불러오지 못하면(망가진 GGUF) 색인은 키워드만 만든다 — eval 은 키워드 숫자를 조용히 내지 않고 실패한다.
+#[test]
+fn eval_set_fails_when_semantic_index_is_missing() {
+    let d = tempfile::tempdir().unwrap();
+    let set = set_dir(d.path());
+    let home = d.path().join("home");
+    let bad = d.path().join("망가진.gguf");
+    std::fs::write(&bad, b"not a gguf model at all").unwrap();
+    let dump = d.path().join("ranks.json");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kra-search"))
+        .arg("--home")
+        .arg(&home)
+        .arg("--model")
+        .arg(&bad)
+        .args(["eval", "--now", "2026-10-15", "--set"])
+        .arg(&set)
+        .arg("--dump")
+        .arg(&dump)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("평가에는 의미 검색이 있어야"), "{err}");
+    assert!(!dump.exists(), "키워드만으로 만든 순위는 남기지 않는다");
+}
+
+/// --home 이 기본 색인 위치(내 색인)를 가리키면 거절한다.
+#[test]
+fn eval_set_refuses_default_home() {
+    let d = tempfile::tempdir().unwrap();
+    let set = set_dir(d.path());
+    let user = d.path().join("사용자");
+    std::fs::create_dir_all(&user).unwrap();
+    let default_home = if cfg!(windows) { user.join("KraSearch") } else { user.join(".kra-search") };
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kra-search"))
+        .env("HOME", &user)
+        .env("USERPROFILE", &user)
+        .env("LOCALAPPDATA", &user)
+        .arg("--home")
+        .arg(default_home.join("."))
+        .args(["eval", "--keyword-only", "--set"])
+        .arg(&set)
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{err}");
+    assert!(err.contains("--home"), "{err}");
+    assert!(!default_home.join("eval-docs").exists(), "복사하지 않는다");
+}

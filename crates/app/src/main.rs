@@ -247,6 +247,33 @@ fn duplicate_line(others: &[String]) -> String {
     format!("같은 내용 {}개 더: {shown}{more}", others.len())
 }
 
+/// `eval` 의 검색기. `--keyword-only`(시험용)가 아니면 의미 검색이 실제로 쓰여야 한다 — 모델 파일이 있어도 불러오지 못하면
+/// 색인은 키워드만 만들고 끝나고(`index_semantic` 은 성공), 검색기는 알림 없이 키워드만 쓴다. 그 숫자를 평가로 내지 않는다.
+/// `--set` 과 `--queries`(Task 18)가 같이 쓴다.
+fn eval_searcher(cli: &Cli, home: &Home, store: &Store, keyword_only: bool) -> Result<app::search::Searcher, String> {
+    let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
+    let searcher = app::search::Searcher::open(store, home, model::model_path(&cli.model).as_deref(), threads)?;
+    if keyword_only {
+        return Ok(searcher);
+    }
+    if let Some(n) = &searcher.notice {
+        return Err(format!("평가에는 의미 검색이 있어야 합니다: {n}"));
+    }
+    if !searcher.semantic_ready() {
+        return Err("평가에는 의미 검색이 있어야 합니다: 의미 검색 색인을 만들지 못했습니다(모델을 불러오지 못함 — 위 메시지 참고).".into());
+    }
+    Ok(searcher)
+}
+
+/// `p` 가 기본 색인 위치(`Home::default_root`)인가. 절대 경로로 바꿔 구성 요소로 비교하고(끝의 `/`·`.` 무시),
+/// 둘 다 있으면 실제 경로(링크 풀기)로도 비교한다. Windows 는 대소문자를 가리지 않는다.
+fn is_default_home(p: &Path) -> bool {
+    let norm = |x: &Path| -> PathBuf { absolute(x).components().filter(|c| !matches!(c, std::path::Component::CurDir)).collect() };
+    let (a, b) = (norm(p), norm(&Home::default_root()));
+    let same = if cfg!(windows) { a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase() } else { a == b };
+    same || matches!((std::fs::canonicalize(&a), std::fs::canonicalize(&b)), (Ok(x), Ok(y)) if x == y)
+}
+
 fn today(now: &Option<String>) -> Result<query::Day, String> {
     match now {
         Some(s) => query::calendar::parse_ymd(s).ok_or_else(|| format!("--now 는 YYYY-MM-DD 형식입니다: {s}")),
@@ -275,8 +302,9 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Eval { set, queries, out, dump, keyword_only } => {
             if !set.is_empty() {
-                if cli.home.is_none() {
-                    return Err("평가 세트는 --home 을 따로 지정하세요(내 색인과 섞이지 않게).".into());
+                // 평가 색인은 내 색인과 섞이면 안 된다 — --home 이 없거나 기본 위치(같은 폴더를 다른 꼴로 쓴 것 포함)면 거절.
+                if cli.home.as_deref().is_none_or(is_default_home) {
+                    return Err("평가 세트는 --home 에 내 색인과 다른 폴더를 지정하세요(내 색인과 섞이지 않게).".into());
                 }
                 // 오래 걸리는 복사·색인 전에 확인한다 — 모델 없이 만든 순위는 제품 순위가 아니다.
                 if model::model_path(&cli.model).is_none() && !keyword_only {
@@ -287,14 +315,11 @@ fn run(cli: Cli) -> Result<(), String> {
                 eprintln!("평가 문서 {}개 준비", app::evalset::materialize(set, &docs_dir)?);
                 // 제품과 같은 색인 흐름(DEC-052). 루트는 복사본 폴더 하나 — 세트 폴더 이름이 경로에 남아 m0eval 의 번호 순서와 같아진다(P2).
                 let t = Instant::now();
-                index_command(&cli, &home, &analyzers, pdfium, vec![docs_dir], None)?;
+                // 평가는 데이터 뒷부분(본문 ③) 켬으로 정의한다(DEC-058) — 다시 쓰는 평가 폴더에 남은 설정(kv data_tail)이 결과를 바꾸지 않게 매번 켠다.
+                index_command(&cli, &home, &analyzers, pdfium, vec![docs_dir], Some("on"))?;
                 eprintln!("색인 {:.1}초", t.elapsed().as_secs_f64());
                 let store = open_store_readonly(&home, &analyzers)?;
-                let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
-                let mut searcher = app::search::Searcher::open(&store, &home, model::model_path(&cli.model).as_deref(), threads)?;
-                if let Some(n) = &searcher.notice {
-                    return Err(format!("평가에는 의미 검색이 있어야 합니다: {n}"));
-                }
+                let mut searcher = eval_searcher(&cli, &home, &store, *keyword_only)?;
                 let mut qs = Vec::new();
                 for d in set {
                     qs.extend(app::evalset::queries(d)?);

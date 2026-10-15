@@ -149,6 +149,12 @@ impl Searcher {
         })
     }
 
+    /// 의미 검색을 실제로 쓰는가(벡터가 있고 지문이 맞고 모델을 불러옴). 모델을 불러오지 못한 채 색인하면 벡터가 없어
+    /// `notice` 없이도 키워드만 쓰게 된다 — 평가는 이것으로 확인한다.
+    pub fn semantic_ready(&self) -> bool {
+        self.sets.state == SetsState::Ready && self.embedder.is_some()
+    }
+
     pub fn search(&mut self, store: &Store, q: &str, today: Day, limit: usize) -> Result<(ParsedQuery, Vec<HybridHit>), String> {
         let pq = query::parse(q, today, &self.table);
         let texts = hybrid::query_texts(&pq, &self.params);
