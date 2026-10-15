@@ -29,12 +29,8 @@ pub struct FailedDoc {
     pub date: Option<query::Day>,
 }
 
-pub struct Query {
-    pub qid: String,
-    pub text: String,
-    pub kind: String,
-    pub relevant: std::collections::HashSet<String>,
-}
+/// 질의 — 제품 `kra-search eval --set` 과 같은 타입·같은 읽기 규칙(`app::evalset::queries`, Task 17 P15).
+pub type Query = app::evalset::EvalQuery;
 
 #[derive(serde::Deserialize)]
 struct Manifest {
@@ -73,52 +69,7 @@ pub fn load_docs(eval_dir: &Path) -> (Vec<EvalDoc>, Vec<FailedDoc>) {
     (ok, failed)
 }
 
-/// queries.tsv 읽기: qid · 검색어 · 유형 · 정답(쉼표) 네 열만 쓴다. 다섯째(date 질의의 기간)·여섯째(recurring) 열은
-/// 사람이 읽는 표시라 점수에 쓰지 않는다. 정답의 빈 id 는 버리고, 정답이 하나도 없는 질의는 모든 지표에서 빼며
-/// 표준 오류에 경고를 남긴다(정답 없는 질의는 nDCG 가 늘 0 이라 평균을 깎기만 한다). 제품 `kra-search eval`(Task 17)도 같은 규칙.
+/// queries.tsv 읽기 — 제품과 같은 함수(`app::evalset::queries`: 네 열만, 빈 id 버림, 정답 없는 질의는 경고하고 뺌).
 pub fn load_queries(eval_dir: &Path) -> Vec<Query> {
-    std::fs::read_to_string(eval_dir.join("queries.tsv"))
-        .expect("queries.tsv")
-        .lines()
-        .skip(1)
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| {
-            let c: Vec<&str> = l.split('\t').collect();
-            let q = Query {
-                qid: c[0].trim().into(),
-                text: c[1].into(),
-                kind: c[2].trim().into(),
-                relevant: c.get(3).copied().unwrap_or("").split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
-            };
-            if q.relevant.is_empty() {
-                eprintln!("경고: 정답이 없는 질의 {} 는 평가에서 뺍니다({})", q.qid, eval_dir.display());
-                return None;
-            }
-            Some(q)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 넷째 열까지만 쓰고, 빈 id 는 버리고, 정답 없는 질의는 뺀다(Task 17 과 같은 규칙).
-    #[test]
-    fn queries_use_four_columns_and_skip_unanswered() {
-        let d = std::env::temp_dir().join(format!("m0eval-queries-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(
-            d.join("queries.tsv"),
-            "qid\tquery\ttype\trelevant\nT001\t작년 계획\tdate\tK0014, \t2025-01-01..2025-12-31\nT003\t연말 계획\tdate\tK0009,K0010\t2025-11-01..2025-12-31\trecurring\nZ001\t정답 없음\tkeyword\t , \nZ002\t열 없음\tkeyword\n\nQ001\t돌봄\tsemantic\tP0001\n",
-        )
-        .unwrap();
-        let q = load_queries(&d);
-        std::fs::remove_dir_all(&d).unwrap();
-        let ids: Vec<&str> = q.iter().map(|x| x.qid.as_str()).collect();
-        assert_eq!(ids, vec!["T001", "T003", "Q001"]);
-        assert_eq!(q[0].relevant, std::collections::HashSet::from(["K0014".to_string()]));
-        assert_eq!(q[1].relevant.len(), 2);
-        assert_eq!(q[1].kind, "date");
-    }
+    app::evalset::queries(eval_dir).unwrap_or_else(|e| panic!("{e}"))
 }

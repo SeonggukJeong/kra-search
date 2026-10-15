@@ -86,9 +86,13 @@ fn mtime_of(d: &HDoc) -> i64 {
     d.date.map(|x| noon_kst_unix_secs(x) * 1_000_000_000).unwrap_or(0)
 }
 
-/// 제품 수집 순서(P2): 수정 시각 최근 먼저, 같으면 상대 경로 `"{세트}/{파일}"` 오름차순. 이 순서의 번호가 내용 id 역할을 한다.
+/// 제품 수집 순서(P2): 수정 시각 최근 먼저, 같으면 상대 경로 `"{세트}{구분자}{파일}"` 오름차순. 이 순서의 번호가 내용 id 역할을 한다.
+/// 제품(`crawler::diff`)은 전체 경로 문자열을 바이트 순으로 비교하는데, 복사본 경로 `{out}{구분자}{세트}{구분자}{파일}` 은
+/// 앞부분 `{out}{구분자}` 가 모두 같아 나머지 문자열 비교와 같다. 구분자는 운영체제 것을 쓴다 — Windows 의 `\` 는 `/` 와
+/// 바이트 값이 달라 "kra"·"kra2" 처럼 한쪽이 다른 쪽의 앞부분인 세트 이름에서 순서가 갈릴 수 있기 때문.
 fn order_docs(hd: &mut [HDoc]) {
-    hd.sort_by_cached_key(|d| (std::cmp::Reverse(mtime_of(d)), format!("{}/{}", d.set, d.file)));
+    let sep = std::path::MAIN_SEPARATOR;
+    hd.sort_by_cached_key(|d| (std::cmp::Reverse(mtime_of(d)), format!("{}{sep}{}", d.set, d.file)));
 }
 
 /// 제목 연도를 찾을 글 — 제품 `Meta::title_texts` 와 같게: 제목이 있으면 "{제목}\n{파일 이름}", 없으면 파일 이름.
@@ -908,7 +912,7 @@ mod tests {
         HDoc { id: id.into(), set: set.into(), file: file.into(), ext: "hwp".into(), date: date.and_then(query::calendar::parse_ymd), doc: None }
     }
 
-    /// P2: 제품 수집 순서 — 수정 시각 최근 먼저, 같으면 "{세트}/{파일}" 오름차순, 날짜 없는 문서는 맨 뒤.
+    /// P2: 제품 수집 순서 — 수정 시각 최근 먼저, 같으면 "{세트}{구분자}{파일}" 오름차순, 날짜 없는 문서는 맨 뒤.
     #[test]
     fn docs_are_numbered_in_product_crawl_order() {
         let mut v = vec![

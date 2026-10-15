@@ -18,6 +18,10 @@ vector = { path = "../vector" }
 doc = { path = "../doc" }
 query = { path = "../query" }
 serde_json.workspace = true
+# 평가 세트(`kra-search eval --set`): manifest.toml 읽기와 복사본 SHA-256 확인. 이미 작업 공간에 있는 크레이트(m0eval·diag).
+serde.workspace = true
+toml = "0.9"
+sha2 = "0.11"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 clap = { version = "4", features = ["derive"] }
 

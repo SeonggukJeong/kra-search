@@ -1,4 +1,4 @@
-//! kra-search 명령줄. `kra-search index`, `kra-search search 검색어`, `kra-search status`.
+//! kra-search 명령줄. `kra-search index`, `kra-search search 검색어`, `kra-search status`, `kra-search eval`.
 
 use app::embedding::{embed_line, run_embedding, EmbedOptions};
 use app::model::{self, MODEL_FILE};
@@ -57,6 +57,24 @@ enum Cmd {
     },
     /// 색인 현황
     Status,
+    /// 검색 품질 평가: --set 평가 세트(개발 PC), --queries 내 질의 파일(폐쇄망 확인)
+    Eval {
+        /// 평가 세트 폴더(manifest.toml·queries.tsv·docs/). 여러 번 지정 가능. --home 을 따로 지정해야 한다.
+        #[arg(long)]
+        set: Vec<PathBuf>,
+        /// 내 질의 파일: 한 줄에 `질의<탭>정답 파일 이름[,정답 파일 이름…]`(UTF-8)
+        #[arg(long)]
+        queries: Option<PathBuf>,
+        /// 보고서 파일(기본: --set 은 화면, --queries 는 kra-search-eval-report.txt)
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// 질의별 순위 JSON(일치 검사용)
+        #[arg(long, hide = true)]
+        dump: Option<PathBuf>,
+        /// 모델 없이 평가 경로만 시험(시험용)
+        #[arg(long, hide = true)]
+        keyword_only: bool,
+    },
     /// (내부용) 상주 추출 워커
     #[command(hide = true)]
     Worker,
@@ -165,6 +183,43 @@ fn index_semantic(cli: &Cli, home: &Home, store: &mut Store, data_tail: Option<&
     Ok(())
 }
 
+/// `index` 와 `eval --set` 이 같이 쓰는 색인 한 번(키워드 → 의미 검색 → meta 검사, 손상이면 한 번 다시).
+fn index_command(cli: &Cli, home: &Home, analyzers: &Analyzers, pdfium: Option<PathBuf>, mut roots: Vec<PathBuf>, data_tail: Option<&str>) -> Result<(), String> {
+    let _lock = lock_index(home)?;
+    let mut store = open_store(home, analyzers)?;
+    // PDF 읽기 도구를 이 프로세스에서 한 번 불러 본다(DLL 을 절대 경로로 읽기만 한다). 못 불러오면 PDF 는 기록하지 않고 건너뛴다.
+    // 워커에게 물어보는 방식보다 단순하고, 워커와 같은 경로·같은 불러오기 코드라 결과가 같다.
+    let pdf_reader = pdfium.as_deref().is_some_and(|p| extract::pdf::init(p).is_ok());
+    if !pdf_reader {
+        eprintln!("PDF 읽기 도구({})를 찾지 못해 PDF 는 이번에 건너뜁니다.", extract::pdf::LIB_NAME);
+    }
+    let mut worker = Worker::new(worker_cmd(pdfium));
+    let timeout = Duration::from_secs(cli.timeout_secs);
+    let mut rebuilt = false;
+    loop {
+        let t = Instant::now();
+        let r = index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).and_then(|s| {
+            println!("{}", summary_line(&s));
+            store.meta.set_kv("stat_keyword_secs", &format!("{:.1}", t.elapsed().as_secs_f64()))?;
+            index_semantic(cli, home, &mut store, data_tail)?;
+            // 검색이 읽는 쪽까지 모두 확인(DEC-056) — 손상이면 아래에서 한 번 다시 만든다.
+            Ok(store.meta.check()?)
+        });
+        match r {
+            // 열 때는 멀쩡했지만 색인 도중(키워드든 의미 검색이든) meta.db 손상이 드러남 — 한 번만 처음부터 다시 만든다.
+            Err(IndexError::MetaCorrupt) if !rebuilt => {
+                rebuilt = true;
+                eprintln!();
+                eprintln!("색인 데이터가 손상되어 처음부터 다시 만듭니다.");
+                drop(store);
+                reset_store(home)?;
+                store = open_store(home, analyzers)?;
+            }
+            r => return r.map_err(|e| e.to_string()),
+        }
+    }
+}
+
 fn summary_line(s: &IndexSummary) -> String {
     let mut line = format!(
         "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 열 수 없는 파일 {}개(다시 시도 포함) · 접근 못 함 {}개",
@@ -214,43 +269,51 @@ fn run(cli: Cli) -> Result<(), String> {
     let analyzers = Analyzers::load()?;
     match &cli.cmd {
         Cmd::Index { root, data_tail } => {
-            let _lock = lock_index(&home)?;
-            let mut store = open_store(&home, &analyzers)?;
             // 지정한 루트(없으면 index_once 가 저장된 루트를 읽어 채운다). 다시 만들 때 이 값을 다시 저장한다.
-            let mut roots: Vec<PathBuf> = root.iter().map(|r| absolute(r)).collect();
-            // PDF 읽기 도구를 이 프로세스에서 한 번 불러 본다(DLL 을 절대 경로로 읽기만 한다). 못 불러오면 PDF 는 기록하지 않고 건너뛴다.
-            // 워커에게 물어보는 방식보다 단순하고, 워커와 같은 경로·같은 불러오기 코드라 결과가 같다.
-            let pdf_reader = pdfium.as_deref().is_some_and(|p| extract::pdf::init(p).is_ok());
-            if !pdf_reader {
-                eprintln!("PDF 읽기 도구({})를 찾지 못해 PDF 는 이번에 건너뜁니다.", extract::pdf::LIB_NAME);
-            }
-            let mut worker = Worker::new(worker_cmd(pdfium));
-            let timeout = Duration::from_secs(cli.timeout_secs);
-            let mut rebuilt = false;
-            loop {
-                let t = Instant::now();
-                let r = index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).and_then(|s| {
-                    println!("{}", summary_line(&s));
-                    store.meta.set_kv("stat_keyword_secs", &format!("{:.1}", t.elapsed().as_secs_f64()))?;
-                    index_semantic(&cli, &home, &mut store, data_tail.as_deref())?;
-                    // 검색이 읽는 쪽까지 모두 확인(DEC-056) — 손상이면 아래에서 한 번 다시 만든다.
-                    Ok(store.meta.check()?)
-                });
-                match r {
-                    // 열 때는 멀쩡했지만 색인 도중(키워드든 의미 검색이든) meta.db 손상이 드러남 — 한 번만 처음부터 다시 만든다.
-                    Err(IndexError::MetaCorrupt) if !rebuilt => {
-                        rebuilt = true;
-                        eprintln!();
-                        eprintln!("색인 데이터가 손상되어 처음부터 다시 만듭니다.");
-                        drop(store);
-                        reset_store(&home)?;
-                        store = open_store(&home, &analyzers)?;
-                    }
-                    r => {
-                        r.map_err(|e| e.to_string())?;
-                        break;
-                    }
+            let roots: Vec<PathBuf> = root.iter().map(|r| absolute(r)).collect();
+            index_command(&cli, &home, &analyzers, pdfium, roots, data_tail.as_deref())?;
+        }
+        Cmd::Eval { set, queries, out, dump, keyword_only } => {
+            if !set.is_empty() {
+                if cli.home.is_none() {
+                    return Err("평가 세트는 --home 을 따로 지정하세요(내 색인과 섞이지 않게).".into());
                 }
+                // 오래 걸리는 복사·색인 전에 확인한다 — 모델 없이 만든 순위는 제품 순위가 아니다.
+                if model::model_path(&cli.model).is_none() && !keyword_only {
+                    return Err(format!("평가에는 의미 검색 모델이 있어야 합니다({MODEL_FILE}, --model)."));
+                }
+                let now = today(&cli.now)?;
+                let docs_dir = absolute(&home.root().join("eval-docs"));
+                eprintln!("평가 문서 {}개 준비", app::evalset::materialize(set, &docs_dir)?);
+                // 제품과 같은 색인 흐름(DEC-052). 루트는 복사본 폴더 하나 — 세트 폴더 이름이 경로에 남아 m0eval 의 번호 순서와 같아진다(P2).
+                let t = Instant::now();
+                index_command(&cli, &home, &analyzers, pdfium, vec![docs_dir], None)?;
+                eprintln!("색인 {:.1}초", t.elapsed().as_secs_f64());
+                let store = open_store_readonly(&home, &analyzers)?;
+                let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
+                let mut searcher = app::search::Searcher::open(&store, &home, model::model_path(&cli.model).as_deref(), threads)?;
+                if let Some(n) = &searcher.notice {
+                    return Err(format!("평가에는 의미 검색이 있어야 합니다: {n}"));
+                }
+                let mut qs = Vec::new();
+                for d in set {
+                    qs.extend(app::evalset::queries(d)?);
+                }
+                let t = Instant::now();
+                let ranks = app::eval::rank_set(&store, &mut searcher, &qs, now)?;
+                eprintln!("질의 {}개 검색 {:.1}초", qs.len(), t.elapsed().as_secs_f64());
+                let report = app::eval::set_report(&qs, &ranks);
+                match out {
+                    Some(p) => std::fs::write(p, &report).map_err(|e| format!("{}: {e}", p.display()))?,
+                    None => println!("{report}"),
+                }
+                if let Some(d) = dump {
+                    std::fs::write(d, serde_json::to_string(&ranks).expect("json")).map_err(|e| format!("{}: {e}", d.display()))?;
+                }
+            } else if queries.is_some() {
+                return Err("--queries 는 아직 지원하지 않습니다(Task 18).".into());
+            } else {
+                return Err("--set 또는 --queries 를 주세요.".into());
             }
         }
         Cmd::Search { limit, query } => {
