@@ -54,3 +54,25 @@ pub fn default_embed_threads() -> usize {
     threads_for(core_split().map(|c| c.0), std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn threads_policy() {
+        assert_eq!(threads_for(Some(8), 24), 4, "i7-13700: 성능 8 → 4(results.md §5.2)");
+        assert_eq!(threads_for(Some(2), 12), 2, "성능 2 + 효율 8 노트북");
+        assert_eq!(threads_for(None, 1), 1);
+        assert_eq!(threads_for(None, 12), 4);
+        assert!((1..=4).contains(&default_embed_threads()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn core_split_is_known_on_windows() {
+        let (perf, eff) = core_split().expect("GetLogicalProcessorInformationEx");
+        assert!(perf >= 1);
+        assert!(perf + eff <= std::thread::available_parallelism().unwrap().get());
+    }
+}
