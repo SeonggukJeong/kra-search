@@ -882,6 +882,7 @@ dependencies = [
  "doc",
  "embed",
  "extract",
+ "platform",
  "serde",
  "serde_json",
  "sha2",
