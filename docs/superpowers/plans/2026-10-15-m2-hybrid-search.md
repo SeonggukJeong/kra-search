@@ -7465,12 +7465,7 @@ git commit -m "ci: real-model end-to-end and 500k bench; release-check workflow 
 
 - [ ] **Step 1: 결정·문제 기록**
 
-`docs/engineering/decisions.md` "M2" 표에 더한다:
-```markdown
-| DEC-056 | `index` 가 끝날 때 meta.db 전체를 `PRAGMA quick_check` 로 읽어 본다. 손상이면 키워드 단계와 같이 한 번 처음부터 다시 만든다 | 검색이 이제 표 전체(수정일·청크 여부)를 읽는다 — index 가 읽지 않는 쪽이 손상되면 검색만 "index 를 다시 실행하세요"를 반복하고 index 는 고치지 못했다(계획 검증 중 `any_corrupt_meta_page_is_rebuilt` 로 발견) | 큰 meta.db 에서 수 초 — 상주 앱(M5)이 index 를 자주 돌리면 주기를 다시 정한다 | 유효 |
-| DEC-057 | 문서 카드: 문단이 없는 문서(표뿐인 CSV·XLSX)는 첫 표 머리글과 첫 행을 "첫 문단" 대신 넣는다. `plan::tag()` 에 `card_v=2` | 그렇지 않으면 표·시트 파일은 카드가 없어 빠른 의미 검색에서 통째로 빠진다(계획 검증 중 발견) | 진단의 카드 길이 통계가 m1-diag-2 와 달라진다(데이터 형식 카드가 생김) | 유효 |
-```
-DEC-055 상태 칸에 덧붙인다: `데이터 방해 문서는 공공데이터포털 대신 고정 시드 생성기(tools/eval/make_data_set.py) — 포털 내려받기에 자동등록 방지 문자·횟수 제한(2026-10-15)`.
+DEC-056·057 과 DEC-055 의 데이터 방해 문서 변경은 계획 단계에서 이미 기록했다(2026-10-15) — 구현 중 내용이 바뀌었으면 그 줄을 고친다.
 
 `docs/engineering/known-issues.md`:
 - KI-001 상태 → `해결: cut_to 창 탐색(M2 Task 9, 시험 huge_paragraph_is_cut_inside_a_window)`.
