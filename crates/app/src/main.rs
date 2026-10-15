@@ -2,7 +2,7 @@
 
 use app::embedding::{embed_line, run_embedding, EmbedOptions};
 use app::model::{self, MODEL_FILE};
-use app::{fail_label, lock_index, open_store, open_store_readonly, reset_store, run_index, search, IndexError, IndexSummary, Store};
+use app::{fail_label, lock_index, open_store, open_store_readonly, reset_store, run_index, IndexError, IndexSummary, Store};
 use clap::{Parser, Subcommand};
 use embed::engine::{Embedder, EngineOptions};
 use extract::worker::Worker;
@@ -28,8 +28,11 @@ struct Cli {
     #[arg(long, global = true)]
     model: Option<PathBuf>,
     /// 의미 검색 색인 스레드 수(기본: 성능 코어 수, 최대 4)
-    #[arg(long, global = true)]
+    #[arg(long, global = true, value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..))]
     threads: Option<usize>,
+    /// (평가·시험용) 기준 시점 YYYY-MM-DD — 날짜 표현("작년")을 이 날 기준으로 읽는다
+    #[arg(long, global = true, hide = true)]
+    now: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -131,8 +134,14 @@ fn index_semantic(cli: &Cli, home: &Home, store: &mut Store, data_tail: Option<&
         return Ok(());
     };
     let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
-    let (fp, cache) = model::fingerprint_of(&path, store.meta.kv(model::MODEL_HASH_KV)?.as_deref())
-        .map_err(|x| IndexError::Other(format!("모델 파일을 읽지 못했습니다: {x}")))?;
+    let (fp, cache) = match model::fingerprint_of(&path, store.meta.kv(model::MODEL_HASH_KV)?.as_deref()) {
+        Ok(v) => v,
+        Err(x) => {
+            // 모델을 읽지 못해도 키워드 색인은 끝났다 — index 를 실패시키지 않는다(M2 설계 §3.5).
+            eprintln!("모델 파일을 읽지 못해 키워드 검색만 준비했습니다: {x}");
+            return Ok(());
+        }
+    };
     store.meta.set_kv(model::MODEL_HASH_KV, &cache)?;
     let profile = model::profile();
     let mut m = match Embedder::load(&path, &EngineOptions { threads, max_tokens: 1024, backend_dir: model::exe_dir() }) {
@@ -181,6 +190,13 @@ fn duplicate_line(others: &[String]) -> String {
     let rest = others.len().saturating_sub(SHOWN_DUPLICATE_PATHS);
     let more = if rest > 0 { format!(" 외 {rest}개") } else { String::new() };
     format!("같은 내용 {}개 더: {shown}{more}", others.len())
+}
+
+fn today(now: &Option<String>) -> Result<query::Day, String> {
+    match now {
+        Some(s) => query::calendar::parse_ymd(s).ok_or_else(|| format!("--now 는 YYYY-MM-DD 형식입니다: {s}")),
+        None => Ok(query::calendar::today()),
+    }
 }
 
 fn run(cli: Cli) -> Result<(), String> {
@@ -239,18 +255,31 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Search { limit, query } => {
             let store = open_store_readonly(&home, &analyzers)?;
-            let hits = search(&store, &query.join(" "), *limit)?;
+            let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
+            let mut s = app::search::Searcher::open(&store, &home, model::model_path(&cli.model).as_deref(), threads)?;
+            let (pq, hits) = s.search(&store, &query.join(" "), today(&cli.now)?, *limit)?;
+            if let Some(n) = &s.notice {
+                eprintln!("{n}");
+            }
+            for c in pq.chips() {
+                let r = c.range.expect("칩");
+                println!("📅 {} → {} ~ {} (이 기간 문서를 앞으로)", &pq.original[c.start..c.end], query::calendar::format_ymd(r.start), query::calendar::format_ymd(r.end));
+            }
             if hits.is_empty() {
                 println!("결과 없음");
             }
             for (i, h) in hits.iter().enumerate() {
-                println!("{:>3}. {}  [{:.2}]", i + 1, h.title, h.score);
-                println!("     {}", h.paths[0]);
-                if h.paths.len() > 1 {
-                    println!("     {}", duplicate_line(&h.paths[1..]));
+                println!("{:>3}. {}", i + 1, h.hit.title);
+                println!("     {}", h.hit.paths[0]);
+                if h.hit.paths.len() > 1 {
+                    println!("     {}", duplicate_line(&h.hit.paths[1..]));
                 }
-                if let Some(f) = &h.fail {
+                if let Some(f) = &h.hit.fail {
                     println!("     ※ {}", fail_label(f));
+                }
+                let w = app::search::why_line(&h.why);
+                if !w.is_empty() {
+                    println!("     {w}");
                 }
             }
         }

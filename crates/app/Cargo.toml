@@ -16,6 +16,7 @@ platform = { path = "../platform" }
 embed = { path = "../embed" }
 vector = { path = "../vector" }
 doc = { path = "../doc" }
+query = { path = "../query" }
 serde_json.workspace = true
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 clap = { version = "4", features = ["derive"] }

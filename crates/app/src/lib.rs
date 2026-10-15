@@ -2,7 +2,7 @@
 pub mod embedding;
 pub mod model;
 mod pipeline;
-mod search;
+pub mod search;
 mod store;
 pub mod vectors;
 

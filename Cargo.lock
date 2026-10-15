@@ -120,6 +120,7 @@ dependencies = [
  "extract",
  "index",
  "platform",
+ "query",
  "rusqlite",
  "serde_json",
  "tempfile",

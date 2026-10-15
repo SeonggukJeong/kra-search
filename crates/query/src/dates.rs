@@ -244,7 +244,10 @@ impl DateTable {
 pub fn title_years(text: &str) -> Vec<i32> {
     // 숫자로 쓴 해는 기준 시점과 무관하게 같은 해로 읽힌다 — 아무 고정 날짜를 쓴다.
     let today = from_ymd(2026, 10, 15);
-    let mut ys: Vec<i32> = DateTable::builtin()
+    // 내장 표는 한 번만 만든다 — 검색기를 열 때 문서 수만큼(5만 건) 부르므로 매번 만들면 느리다.
+    static TABLE: std::sync::OnceLock<DateTable> = std::sync::OnceLock::new();
+    let mut ys: Vec<i32> = TABLE
+        .get_or_init(DateTable::builtin)
         .find(text, today)
         .iter()
         .filter(|s| s.relativity == Relativity::Absolute)
