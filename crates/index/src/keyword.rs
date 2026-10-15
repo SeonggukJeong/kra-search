@@ -327,20 +327,33 @@ mod tests {
     }
 
     /// INC-021: 점수가 같은 문서의 순서는 내용 id 오름차순 — 세그먼트 배치(넣은 순서·커밋 횟수)와 무관하고, 상한에서 잘릴 때도 같다.
+    /// tantivy 0.26 은 세그먼트를 무작위 UUID 를 키로 한 HashMap(프로세스마다 다른 씨앗) 순서로 훑는다 — 고치기 전 코드는 문서 3개
+    /// 시험을 6번에 1번꼴로 우연히 통과했다. 그래서 동점 문서 8개를 하나씩 커밋한 색인을 여러 번 만들어 본다
+    /// (고치기 전 코드가 우연히 통과할 확률은 사실상 0).
     #[test]
     fn ties_break_by_content_id_regardless_of_segments() {
         let same = || d(None, &[], &["회의 결과를 정리했다"]);
-        let one = index_of(&[(1, same(), "a.hwp"), (3, same(), "a.hwp"), (5, same(), "a.hwp")]);
-        let mut many = KeywordIndex::in_ram(&analyzers()).unwrap();
-        for id in [5, 3, 1] {
-            many.upsert(&KeywordDoc::new(id, Some(&same()), &["a.hwp".to_string()])).unwrap();
-            many.commit().unwrap();
+        let want: Vec<u64> = (1..=8).collect();
+        let one = index_of(&want.iter().map(|&id| (id, same(), "a.hwp")).collect::<Vec<_>>());
+        let mut kws = vec![one];
+        for round in 0..4u64 {
+            let mut many = KeywordIndex::in_ram(&analyzers()).unwrap();
+            // 넣는 순서도 회차마다 바꾼다(역순·건너뛰기)
+            let mut order = want.clone();
+            order.rotate_left(round as usize * 3 % 8);
+            if round % 2 == 0 {
+                order.reverse();
+            }
+            for id in order {
+                many.upsert(&KeywordDoc::new(id, Some(&same()), &["a.hwp".to_string()])).unwrap();
+                many.commit().unwrap();
+            }
+            kws.push(many);
         }
-        for kw in [&one, &many] {
-            assert_eq!(ids(kw, "회의"), vec![1, 3, 5]);
-            assert_eq!(kw.search("회의", 2).unwrap().into_iter().map(|x| x.0).collect::<Vec<_>>(), vec![1, 3], "상한에서도 id 순");
-            let mut ph = kw.phrase_ids("회의 결과", 10).unwrap();
-            assert_eq!(ph.clone(), { ph.sort(); ph }, "구절 목록도 같은 규칙");
+        for kw in &kws {
+            assert_eq!(ids(kw, "회의"), want);
+            assert_eq!(kw.search("회의", 3).unwrap().into_iter().map(|x| x.0).collect::<Vec<_>>(), vec![1, 2, 3], "상한에서도 id 순");
+            assert_eq!(kw.phrase_ids("회의 결과", 10).unwrap(), want, "구절 목록도 같은 규칙");
         }
     }
 
