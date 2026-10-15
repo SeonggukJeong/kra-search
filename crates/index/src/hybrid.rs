@@ -65,11 +65,13 @@ pub struct HybridParams {
 
 impl Default for HybridParams {
     fn default() -> Self {
+        // docs/m2/params.json(Task 16, 2026-10-16) — 조정용 질의로 고름(DEC-051·058).
+        // 바뀐 것은 rrf_k 60 → 10 하나, 유형 나누기는 하지 않음(0). 나머지는 이전 값 그대로 확인됨.
         HybridParams {
-            rrf_k: 60.0,
+            rrf_k: 10.0,
             w_keyword: [1.0, 1.0],
             w_semantic: [1.0, 1.0],
-            keyword_max_chars: query::KEYWORD_MAX_CHARS,
+            keyword_max_chars: 0,
             combine: Combine::ChunkElseCard,
             floor: 0.0,
             keyword: KeywordWeights::default(),
@@ -364,6 +366,15 @@ pub fn search(
 
 #[cfg(test)]
 mod tests {
+    /// P5: 평가가 고른 값(`docs/m2/params.json`, `card_tokens` 는 무시)이 제품 기본값과 같다.
+    #[test]
+    fn default_params_equal_saved_params_json() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/m2/params.json");
+        let text = std::fs::read_to_string(path).expect("docs/m2/params.json");
+        let saved: HybridParams = serde_json::from_str(&text).expect("HybridParams 로 읽힘");
+        assert_eq!(saved, HybridParams::default());
+    }
+
     use super::*;
     use crate::keyword::{KeywordDoc, KeywordIndex};
     use crate::tokenize::Analyzers;
@@ -452,7 +463,8 @@ mod tests {
         assert!((score("국정감사 지적사항", 8) - kw_slot).abs() < 1e-12);
         assert!((score("국정감사 지적사항", 6) - se_slot).abs() < 1e-12);
         assert!((score("국정감사 지적사항", 10) - kw_slot).abs() < 1e-12);
-        assert_eq!(HybridParams::default().keyword_max_chars, query::KEYWORD_MAX_CHARS);
+        // DEC-058(Task 16): 평가에서 나누는 쪽이 이기지 못해 기본은 나누지 않음.
+        assert_eq!(HybridParams::default().keyword_max_chars, 0);
     }
 
     #[test]
