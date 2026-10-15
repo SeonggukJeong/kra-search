@@ -169,12 +169,19 @@ fn index_semantic(cli: &Cli, home: &Home, store: &mut Store, data_tail: Option<&
             return Ok(());
         }
     };
+    // 처음부터 색인인가: 이 실행을 시작할 때 파일도 벡터도 없었다(stat_full 은 키워드 단계가 "파일이 없었는가"로 먼저 적어 둔다).
+    let ec = store.meta.embed_counts(embed::plan::DATA_HEAD)?;
+    let vectors_empty = ec.cards_done == 0 && ec.main_done == 0 && ec.tail_done == 0;
+    let files_were_empty = store.meta.kv("stat_full")?.as_deref() == Some("1");
+    store.meta.set_kv("stat_full", if files_were_empty && vectors_empty { "1" } else { "0" })?;
     let s = run_embedding(store, home, &mut m, &fp, &profile, &EmbedOptions { data_tail: tail, stop_after_append: None }, &mut |c| eprint!("\r{}", embed_line(c)))?;
     eprintln!();
     for (k, v) in [("stat_cards_secs", s.secs_cards), ("stat_body_secs", s.secs_body)] {
         store.meta.set_kv(k, &format!("{v:.1}"))?;
     }
     store.meta.set_kv("stat_threads", &threads.to_string())?;
+    store.meta.set_kv("stat_cards_new", &s.cards.to_string())?;
+    store.meta.set_kv("stat_chunks_new", &s.chunks.to_string())?;
     let mut line = format!("의미 검색: 빠른 {}개 · 정밀 {}개 새로 만듦 ({threads}스레드)", s.cards, s.chunks);
     if s.failed > 0 {
         line += &format!(" · 만들지 못함 {}개", s.failed);
@@ -198,9 +205,16 @@ fn index_command(cli: &Cli, home: &Home, analyzers: &Analyzers, pdfium: Option<P
     let mut rebuilt = false;
     loop {
         let t = Instant::now();
+        let files_were_empty = store.meta.counts().is_ok_and(|c| c.files == 0);
         let r = index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).and_then(|s| {
             println!("{}", summary_line(&s));
             store.meta.set_kv("stat_keyword_secs", &format!("{:.1}", t.elapsed().as_secs_f64()))?;
+            // 이번 실행의 처리량 — 시간만 있으면 "0.3초" 가 얼마를 처리한 것인지 알 수 없다. 의미 검색 단계가 못 돌면 0 으로 남는다.
+            store.meta.set_kv("stat_extracted", &s.extracted.to_string())?;
+            store.meta.set_kv("stat_full", if files_were_empty { "1" } else { "0" })?;
+            for k in ["stat_cards_secs", "stat_body_secs", "stat_cards_new", "stat_chunks_new"] {
+                store.meta.set_kv(k, "0")?;
+            }
             index_semantic(cli, home, &mut store, data_tail)?;
             // 검색이 읽는 쪽까지 모두 확인(DEC-056) — 손상이면 아래에서 한 번 다시 만든다.
             Ok(store.meta.check()?)
@@ -340,7 +354,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 let store = open_store_readonly(&home, &analyzers)?;
                 let bytes = std::fs::read(tsv).map_err(|e| format!("질의 파일을 읽지 못했습니다: {e}"))?;
                 let text = String::from_utf8(bytes).map_err(|_| "질의 파일을 UTF-8 로 저장해 주세요(메모장: 다른 이름으로 저장 → 인코딩 UTF-8).".to_string())?;
-                let qs = app::eval::read_user_queries(&text);
+                let (qs, skipped_lines) = app::eval::parse_user_queries(&text);
                 if qs.is_empty() {
                     return Err("질의가 없습니다 — 한 줄에 `질의<탭>정답 파일 이름`".into());
                 }
@@ -352,12 +366,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 let rs = app::eval::run_user_queries(&store, &mut s, &qs, today(&cli.now)?)?;
                 let me = |e: index::meta::MetaError| IndexError::from(e).to_string();
                 let c = store.meta.counts().map_err(me)?;
-                let mut stats = Vec::new();
-                for (k, label) in [("stat_keyword_secs", "키워드 검색 색인(초)"), ("stat_cards_secs", "빠른 의미 검색 색인(초)"), ("stat_body_secs", "정밀 의미 검색 색인(초)"), ("stat_threads", "색인 스레드")] {
-                    if let Some(v) = store.meta.kv(k).map_err(me)? {
-                        stats.push((label.to_string(), v));
-                    }
-                }
+                let stats = app::eval::IndexStats::from_kv(|k| store.meta.kv(k).ok().flatten());
                 let ix = app::eval::IndexInfo { files: c.files, contents: c.contents, failed: c.failed, embed: store.meta.embed_counts(embed::plan::DATA_HEAD).map_err(me)?, stats };
                 let split = platform::cpu::core_split();
                 let pc = app::eval::PcInfo {
@@ -366,10 +375,14 @@ fn run(cli: Cli) -> Result<(), String> {
                     logical: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0),
                     threads,
                 };
-                let report = app::eval::user_report(&rs, &ix, &pc, model_ms);
-                let path = out.clone().unwrap_or_else(|| PathBuf::from("kra-search-eval-report.txt"));
-                std::fs::write(&path, &report).map_err(|e| format!("보고서를 쓰지 못했습니다: {e}"))?;
+                // 설정 지문: 직렬화한 검색 설정의 xxh3 앞 8자리(사용자 내용 없음).
+                let params_id = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(serde_json::to_string(&s.params).expect("json").as_bytes()))[..8].to_string();
+                let run = app::eval::RunInfo { version: env!("CARGO_PKG_VERSION").to_string(), params_id, skipped_lines };
+                let report = app::eval::user_report(&rs, &ix, &pc, &run, model_ms);
+                // 화면에 먼저 — 파일을 못 써도 이 실행의 결과는 남는다.
                 println!("{report}");
+                let path = out.clone().unwrap_or_else(|| PathBuf::from("kra-search-eval-report.txt"));
+                std::fs::write(&path, &report).map_err(|e| format!("보고서 파일을 쓰지 못했습니다(위 화면 내용을 복사해 가세요): {e}"))?;
                 // 경로는 이 PC 화면에만 나온다 — 보고서 파일에는 없다.
                 eprintln!("보고서: {}", path.display());
             } else {

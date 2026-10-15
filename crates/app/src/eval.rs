@@ -5,14 +5,14 @@ use crate::search::Searcher;
 use crate::store::Store;
 use query::Day;
 use index::meta::EmbedCounts;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
-use std::path::Path;
 use std::time::Instant;
 
 /// 질의별 평가 문서 id 순위(상위 100). 경로 파일 이름의 "(id)" 로 문서를 알아본다.
 pub fn rank_set(store: &Store, s: &mut Searcher, qs: &[EvalQuery], today: Day) -> Result<BTreeMap<String, Vec<String>>, String> {
     let mut out = BTreeMap::new();
+    let notice_before = s.notice.clone();
     for q in qs {
         let (_, hits) = s.search(store, &q.text, today, 100)?;
         let mut ids: Vec<String> = Vec::new();
@@ -27,6 +27,7 @@ pub fn rank_set(store: &Store, s: &mut Searcher, qs: &[EvalQuery], today: Day) -
         }
         out.insert(q.qid.clone(), ids);
     }
+    check_no_mid_run_notice(&notice_before, s)?;
     Ok(out)
 }
 
@@ -61,25 +62,94 @@ pub fn set_report(qs: &[EvalQuery], ranks: &BTreeMap<String, Vec<String>>) -> St
 pub struct UserQuery {
     pub line: usize,
     pub text: String,
+    /// 쉼표로 가른 정답 이름(따옴표 뗌)
     pub answers: Vec<String>,
+    /// 탭으로 가른 정답 칸(따옴표 뗌) — `1,2분기 실적.hwp` 처럼 이름에 쉼표가 있을 수 있어 칸 전체를 먼저 이름으로 본다.
+    pub fields: Vec<String>,
 }
 
-/// `질의<탭>정답 파일 이름[,정답…]`. BOM·빈 줄·첫 줄 머리("질의"/"query")는 건너뛴다.
-pub fn read_user_queries(text: &str) -> Vec<UserQuery> {
+fn is_header(q: &str) -> bool {
+    q == "질의" || q == "검색어" || q.eq_ignore_ascii_case("query")
+}
+
+/// 앞뒤 공백과 감싼 큰따옴표(엑셀·메모장에서 쉼표 든 칸에 붙는다)를 뗀다.
+fn unquote(x: &str) -> &str {
+    x.trim().trim_matches('"').trim()
+}
+
+/// `질의<탭>정답 파일 이름[,정답…][<탭>정답…]`. BOM·빈 줄·첫 줄 머리("질의"/"검색어"/"query")는 건너뛴다.
+/// 두 번째 값은 읽지 못한 줄 번호(탭이 없거나 질의·정답이 빈 줄) — 보고서에 줄 번호만 남긴다.
+pub fn parse_user_queries(text: &str) -> (Vec<UserQuery>, Vec<usize>) {
     let text = text.trim_start_matches('\u{feff}');
-    let mut out = Vec::new();
+    let (mut out, mut skipped) = (Vec::new(), Vec::new());
     for (i, l) in text.lines().enumerate() {
-        let Some((q, a)) = l.split_once('\t') else { continue };
-        let q = q.trim();
-        if q.is_empty() || (i == 0 && (q == "질의" || q.eq_ignore_ascii_case("query"))) {
+        if l.trim().is_empty() {
             continue;
         }
-        let answers: Vec<String> = a.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
-        if !answers.is_empty() {
-            out.push(UserQuery { line: i + 1, text: q.to_string(), answers });
+        let mut cols = l.split('\t');
+        let q = cols.next().unwrap_or("").trim();
+        if i == 0 && is_header(q) {
+            continue;
         }
+        let fields: Vec<String> = cols.map(|c| unquote(c).to_string()).filter(|c| !c.is_empty()).collect();
+        if q.is_empty() || fields.is_empty() {
+            skipped.push(i + 1);
+            continue;
+        }
+        let answers: Vec<String> = fields.iter().flat_map(|f| f.split(',')).map(|x| unquote(x).to_string()).filter(|x| !x.is_empty()).collect();
+        out.push(UserQuery { line: i + 1, text: q.to_string(), answers, fields });
     }
-    out
+    (out, skipped)
+}
+
+pub fn read_user_queries(text: &str) -> Vec<UserQuery> {
+    parse_user_queries(text).0
+}
+
+/// 이름 맞추기용 꼴: NFC(맥·윈도 한글 조합 차이) + 소문자 + 구분자 `/`.
+fn norm(x: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    x.trim().nfc().collect::<String>().to_lowercase().replace('\\', "/")
+}
+
+/// 색인된 파일(정규화한 경로 → 내용 id) 위에서 정답 이름을 내용 id 로 푼다.
+pub struct NameIndex {
+    files: Vec<(String, i64)>,
+}
+
+impl NameIndex {
+    pub fn new<'a>(files: impl IntoIterator<Item = (&'a str, i64)>) -> NameIndex {
+        NameIndex { files: files.into_iter().map(|(p, id)| (norm(p), id)).collect() }
+    }
+
+    /// 정답 하나가 가리키는 내용 id 들. 폴더가 든 정답(`2025\\계획.hwp`)은 저장 경로의 끝과 맞추고(구분자 `\\`·`/` 모두),
+    /// 이름만 쓴 정답은 파일 이름과 맞춘다. 확장자를 뺀 이름은 그렇게 맞는 것이 없을 때만 본다.
+    pub fn resolve(&self, answer: &str) -> HashSet<i64> {
+        let a = norm(unquote(answer)).trim_matches('/').to_string();
+        if a.is_empty() {
+            return HashSet::new();
+        }
+        let suffix = format!("/{a}");
+        let exact = |p: &str| p == a || p.ends_with(&suffix);
+        let noext = |p: &str| match p.rfind('.') {
+            Some(i) if i > p.rfind('/').map_or(0, |s| s + 1) => p[..i].to_string(),
+            _ => p.to_string(),
+        };
+        let hit: HashSet<i64> = self.files.iter().filter(|(p, _)| exact(p)).map(|x| x.1).collect();
+        if !hit.is_empty() {
+            return hit;
+        }
+        self.files.iter().filter(|(p, _)| exact(&noext(p))).map(|x| x.1).collect()
+    }
+
+    /// 한 칸의 정답들: 칸 전체가 색인된 이름이면 그대로 한 개, 아니면 쉼표로 가른다. 정답 단위마다 내용 id 집합.
+    pub fn resolve_field(&self, field: &str) -> Vec<HashSet<i64>> {
+        let whole = self.resolve(field);
+        if !whole.is_empty() {
+            return vec![whole];
+        }
+        field.split(',').filter(|x| !unquote(x).is_empty()).map(|x| self.resolve(x)).collect()
+    }
 }
 
 /// 질의 하나의 한 설정 결과: (nDCG@10, Recall@20, 첫 정답 순위).
@@ -103,10 +173,10 @@ pub struct UserResult {
     pub split: Score,
     /// 제품 설정 검색 한 번(해석 + 뜻 계산 + 검색) 밀리초 — 비교용 추가 검색은 넣지 않는다
     pub ms: f64,
-}
-
-fn file_key(name: &str) -> String {
-    name.trim().to_lowercase()
+    /// 정답 하나가 내용 둘 이상과 맞음(같은 이름이 여러 폴더에 있음) — 정답 집합이 넓어졌을 수 있다
+    pub ambiguous: bool,
+    /// 정답 여러 개 중 일부만 색인에서 찾음
+    pub partial: bool,
 }
 
 /// 첫 페이지(상위 10) 안에 정답이 있는가.
@@ -115,19 +185,16 @@ fn on_first_page(rank: Option<usize>) -> bool {
 }
 
 pub fn run_user_queries(store: &Store, s: &mut Searcher, qs: &[UserQuery], today: Day) -> Result<Vec<UserResult>, String> {
-    // 파일 이름(소문자) → 내용 id. 확장자 없이 쓴 정답은 이름 앞부분으로도 찾는다.
-    let mut by_name: HashMap<String, HashSet<i64>> = HashMap::new();
-    for f in store.meta.all_files().map_err(crate::store::user_error)? {
-        let Some(id) = f.content_id else { continue };
-        let name = Path::new(&f.path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        let stem = Path::new(&name).file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string();
-        by_name.entry(file_key(&name)).or_default().insert(id);
-        by_name.entry(file_key(&stem)).or_default().insert(id);
-    }
+    let all = store.meta.all_files().map_err(crate::store::user_error)?;
+    let names = NameIndex::new(all.iter().filter_map(|f| f.content_id.map(|id| (f.path.as_str(), id))));
     let base = s.params.clone();
+    let notice_before = s.notice.clone();
     let mut out = Vec::new();
     for q in qs {
-        let relevant: HashSet<String> = q.answers.iter().filter_map(|a| by_name.get(&file_key(a))).flatten().map(|id| id.to_string()).collect();
+        let units: Vec<HashSet<i64>> = q.fields.iter().flat_map(|f| names.resolve_field(f)).collect();
+        let relevant: HashSet<String> = units.iter().flatten().map(|id| id.to_string()).collect();
+        let ambiguous = units.iter().any(|u| u.len() > 1);
+        let partial = units.iter().any(|u| !u.is_empty()) && units.iter().any(|u| u.is_empty());
         let ids = |hits: &[crate::search::HybridHit]| hits.iter().map(|h| h.hit.content_id.to_string()).collect::<Vec<_>>();
         let score = |r: &[String]| -> Score { (ndcg_at_k(r, &relevant, 10), recall_at_k(r, &relevant, 20), first_relevant_rank(r, &relevant)) };
         // 제품 설정(지연은 이 검색만 잰다).
@@ -142,9 +209,61 @@ pub fn run_user_queries(store: &Store, s: &mut Searcher, qs: &[UserQuery], today
         s.params = index::hybrid::HybridParams { keyword_max_chars: SPLIT_COMPARE_CHARS, ..base.clone() };
         let split = s.search(store, &q.text, today, 100).map(|(_, h)| score(&ids(&h)));
         s.params = base.clone();
-        out.push(UserResult { line: q.line, has_date: pq.chips().count() > 0, found: !relevant.is_empty(), on, off: off?, split: split?, ms });
+        out.push(UserResult { line: q.line, has_date: pq.chips().count() > 0, found: !relevant.is_empty(), on, off: off?, split: split?, ms, ambiguous, partial });
     }
+    check_no_mid_run_notice(&notice_before, s)?;
     Ok(out)
+}
+
+/// 평가 도중 검색어의 뜻을 계산하지 못해 키워드만 쓴 검색이 섞였으면(`notice` 가 새로 생김) 보고서를 만들지 않는다.
+pub fn check_no_mid_run_notice(before: &Option<String>, s: &Searcher) -> Result<(), String> {
+    match &s.notice {
+        Some(n) if Some(n) != before.as_ref() => Err(format!("평가 도중 의미 검색을 쓰지 못한 검색이 있어 보고서를 만들지 않습니다: {n}")),
+        _ => Ok(()),
+    }
+}
+
+/// 마지막 `index` 실행의 기록(kv `stat_*`). 숫자·참거짓뿐이라 문서·경로가 들어갈 수 없다.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct IndexStats {
+    pub keyword_secs: Option<f64>,
+    pub cards_secs: Option<f64>,
+    pub body_secs: Option<f64>,
+    pub threads: Option<u64>,
+    /// 이번 실행에서 새로 읽은(바뀐) 문서 수
+    pub extracted: Option<u64>,
+    pub cards_new: Option<u64>,
+    pub chunks_new: Option<u64>,
+    /// 실행을 시작할 때 색인이 비어 있었는가(처음부터 색인)
+    pub full: Option<bool>,
+}
+
+impl IndexStats {
+    pub fn from_kv(get: impl Fn(&str) -> Option<String>) -> IndexStats {
+        let f = |k: &str| get(k).and_then(|v| v.trim().parse::<f64>().ok());
+        let n = |k: &str| get(k).and_then(|v| v.trim().parse::<u64>().ok());
+        IndexStats {
+            keyword_secs: f("stat_keyword_secs"),
+            cards_secs: f("stat_cards_secs"),
+            body_secs: f("stat_body_secs"),
+            threads: n("stat_threads"),
+            extracted: n("stat_extracted"),
+            cards_new: n("stat_cards_new"),
+            chunks_new: n("stat_chunks_new"),
+            full: get("stat_full").and_then(|v| match v.trim() {
+                "1" => Some(true),
+                "0" => Some(false),
+                _ => None,
+            }),
+        }
+    }
+}
+
+/// 보고서 머리에 남기는 실행 정보 — 프로그램 버전, 설정 지문(앞 8자리), 읽지 못한 질의 파일 줄 번호. 사용자 내용 없음.
+pub struct RunInfo {
+    pub version: String,
+    pub params_id: String,
+    pub skipped_lines: Vec<usize>,
 }
 
 pub struct PcInfo {
@@ -159,8 +278,7 @@ pub struct IndexInfo {
     pub contents: u64,
     pub failed: u64,
     pub embed: EmbedCounts,
-    /// kv stat_* (마지막 index 기준)
-    pub stats: Vec<(String, String)>,
+    pub stats: IndexStats,
 }
 
 fn pct(v: &mut [f64], p: f64) -> f64 {
@@ -177,7 +295,7 @@ fn mean(v: &[f64]) -> f64 {
 }
 
 /// 반출용 보고서. 질의 글·파일 이름·경로는 받지 않으므로 들어갈 수 없다(M2 설계 §7, INC-010 원칙).
-pub fn user_report(rs: &[UserResult], ix: &IndexInfo, pc: &PcInfo, model_ms: f64) -> String {
+pub fn user_report(rs: &[UserResult], ix: &IndexInfo, pc: &PcInfo, run: &RunInfo, model_ms: f64) -> String {
     let found: Vec<&UserResult> = rs.iter().filter(|r| r.found).collect();
     let lines = |v: &[&UserResult]| -> String {
         if v.is_empty() {
@@ -188,6 +306,9 @@ pub fn user_report(rs: &[UserResult], ix: &IndexInfo, pc: &PcInfo, model_ms: f64
     };
     let missing: Vec<String> = rs.iter().filter(|r| !r.found).map(|r| r.line.to_string()).collect();
     let missing = if missing.is_empty() { "없음".to_string() } else { missing.join(", ") };
+    let nums = |v: &[usize]| if v.is_empty() { "없음".to_string() } else { v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ") };
+    let ambiguous: Vec<usize> = rs.iter().filter(|r| r.ambiguous).map(|r| r.line).collect();
+    let partial: Vec<usize> = rs.iter().filter(|r| r.partial).map(|r| r.line).collect();
     let nd = |v: &[&UserResult], f: fn(&UserResult) -> Score| mean(&v.iter().map(|r| f(r).0).collect::<Vec<_>>());
     let rc = |v: &[&UserResult], f: fn(&UserResult) -> Score| mean(&v.iter().map(|r| f(r).1).collect::<Vec<_>>());
     let fp = |v: &[&UserResult], f: fn(&UserResult) -> Score| v.iter().filter(|r| on_first_page(f(r).2)).count();
@@ -215,9 +336,11 @@ pub fn user_report(rs: &[UserResult], ix: &IndexInfo, pc: &PcInfo, model_ms: f64
     let n = |v: &[&UserResult]| v.len();
     let mut s = String::new();
     writeln!(s, "KRA 문서검색 — 폐쇄망 품질 확인 보고서 (M2)").unwrap();
-    writeln!(s, "이 파일에는 검색어·파일 이름·경로·문서 내용이 들어 있지 않습니다. 줄 번호는 질의 파일의 줄입니다.\n").unwrap();
+    writeln!(s, "이 파일에는 검색어·파일 이름·경로·문서 내용이 들어 있지 않습니다. 줄 번호는 질의 파일의 줄입니다.").unwrap();
+    writeln!(s, "프로그램 {} · 검색 설정 {}\n", run.version, run.params_id).unwrap();
     writeln!(s, "[요약] (정답 파일을 찾은 질의 {}개 기준, 제품 설정 = 날짜 가산 켬 · 검색어 유형 나누지 않음)", found.len()).unwrap();
     writeln!(s, "질의 {}개 · 정답 파일을 색인에서 찾지 못한 질의 {}개(줄: {missing})", rs.len(), rs.len() - found.len()).unwrap();
+    writeln!(s, "정답 이름이 여러 파일과 맞은 질의(줄): {} · 정답 일부만 찾은 질의(줄): {} · 읽지 못한 질의 파일 줄: {}", nums(&ambiguous), nums(&partial), nums(&run.skipped_lines)).unwrap();
     writeln!(s, "nDCG@10 {:.4} · Recall@20 {:.4}", nd(&found, on), rc(&found, on)).unwrap();
     let all = &found;
     writeln!(s, "첫 페이지(10위 안)에 정답 {}/{} · 그중 1위 {top1}", fp(all, on), n(all)).unwrap();
@@ -276,9 +399,17 @@ pub fn user_report(rs: &[UserResult], ix: &IndexInfo, pc: &PcInfo, model_ms: f64
     let e = &ix.embed;
     writeln!(s, "청크 수 {} (의미 검색에 넣은 것 {})", e.main_total + e.tail_total, e.main_done + e.tail_done).unwrap();
     writeln!(s, "빠른 의미 검색 {}/{} · 정밀 의미 검색 {}/{} · 데이터 파일 뒷부분 {}/{}", e.cards_done, e.cards_total, e.main_done, e.main_total, e.tail_done, e.tail_total).unwrap();
-    for (k, v) in &ix.stats {
-        writeln!(s, "{k}: {v}").unwrap();
-    }
+    let st = &ix.stats;
+    let yn = |x: Option<bool>| x.map_or("기록 없음", |v| if v { "예" } else { "아니오" });
+    let cnt = |x: Option<u64>| x.map_or("기록 없음".to_string(), |v| format!("{v}개"));
+    let sec = |x: Option<f64>| x.map_or("기록 없음".to_string(), |v| format!("{v:.1}초"));
+    writeln!(s, "마지막 index 실행: 새로 읽음 {} · 빠른 의미 검색 {} · 정밀 의미 검색 {} · 처음부터 색인 여부: {}", cnt(st.extracted), cnt(st.cards_new), cnt(st.chunks_new), yn(st.full)).unwrap();
+    writeln!(s, "걸린 시간: 키워드 검색 색인 {} · 빠른 의미 검색 {} · 정밀 의미 검색 {} · 색인 스레드 {}", sec(st.keyword_secs), sec(st.cards_secs), sec(st.body_secs), st.threads.map_or("기록 없음".to_string(), |v| v.to_string())).unwrap();
+    let rate = |n: Option<u64>, secs: Option<f64>| match (n, secs) {
+        (Some(n), Some(t)) if n > 0 && t > 0.0 => format!("{:.1}개/초", n as f64 / t),
+        _ => "계산 못 함".to_string(),
+    };
+    writeln!(s, "처리 속도: 빠른 의미 검색 {} · 정밀 의미 검색(청크) {}", rate(st.cards_new, st.cards_secs), rate(st.chunks_new, st.body_secs)).unwrap();
     writeln!(s, "\n[속도]").unwrap();
     writeln!(s, "검색 p50 {:.0}ms · p95 {:.0}ms (검색어 해석 + 뜻 계산 + 검색, 모델을 불러온 뒤, 제품 설정 {}회) · 모델 불러오기 {model_ms:.0}ms", pct(&mut ms, 0.5), pct(&mut ms, 0.95), rs.len()).unwrap();
     writeln!(s, "\n[PC]").unwrap();
