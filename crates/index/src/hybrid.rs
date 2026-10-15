@@ -27,6 +27,9 @@ pub struct HybridParams {
     /// [키워드형 질의, 의미형 질의]
     pub w_keyword: [f64; 2],
     pub w_semantic: [f64; 2],
+    /// 검색어 유형(키워드형·의미형)을 나누는 글자 수 문턱(`query::classify_with`). 0 이면 나누지 않는다 — 모든 검색어가
+    /// 의미형 가중치(`[1]`)를 쓴다. 사람마다 검색 습관이 달라 M2 평가에서 0·6·8·10 을 견줘 나누기가 뚜렷이 나을 때만 남긴다(사용자 결정 2026-10-15).
+    pub keyword_max_chars: usize,
     pub combine: Combine,
     /// 코사인 하한 — 미만인 의미 결과는 결합에서 뺀다. 0 이하면 끔.
     pub floor: f32,
@@ -64,6 +67,7 @@ impl Default for HybridParams {
             rrf_k: 60.0,
             w_keyword: [1.0, 1.0],
             w_semantic: [1.0, 1.0],
+            keyword_max_chars: query::KEYWORD_MAX_CHARS,
             combine: Combine::ChunkElseCard,
             floor: 0.0,
             keyword: KeywordWeights::default(),
@@ -242,7 +246,7 @@ fn shift_years(d: Day, k: i32) -> Day {
 }
 
 pub fn fuse(keyword: &[(i64, f32)], sem: &Semantic, pq: &ParsedQuery, p: &HybridParams, today: Day, meta: &dyn DocMeta, phrase: &HashSet<i64>) -> Vec<Hit> {
-    let ki = match pq.kind {
+    let ki = match pq.kind_with(p.keyword_max_chars) {
         QueryKind::Keyword => 0,
         QueryKind::Semantic => 1,
     };
@@ -379,6 +383,7 @@ mod tests {
             rrf_k: 60.0,
             w_keyword: [1.0, 1.0],
             w_semantic: [1.0, 1.0],
+            keyword_max_chars: 8,
             combine: Combine::ChunkElseCard,
             floor: 0.0,
             keyword: KeywordWeights::default(),
@@ -432,6 +437,20 @@ mod tests {
         let kw = fuse(&[(1, 1.0)], &Semantic::default(), &pq("더비온"), &p, today(), &meta(&[], &[]), &none());
         let se = fuse(&[(1, 1.0)], &Semantic::default(), &pq("새 사업 시작하기 전에 확인할 것"), &p, today(), &meta(&[], &[]), &none());
         assert!((kw[0].score / se[0].score - 5.0).abs() < 1e-9);
+    }
+
+    /// 유형 나누기 문턱은 매개변수다: 0 = 나누지 않음(모두 의미형 가중치), 6 이면 "국정감사 지적사항"(8자)은 의미형.
+    #[test]
+    fn keyword_max_chars_decides_the_weight_slot() {
+        let base = HybridParams { w_keyword: [5.0, 1.0], ..pinned() };
+        let score = |q: &str, n: usize| fuse(&[(1, 1.0)], &Semantic::default(), &pq(q), &HybridParams { keyword_max_chars: n, ..base.clone() }, today(), &meta(&[], &[]), &none())[0].score;
+        let (kw_slot, se_slot) = (5.0 / 61.0, 1.0 / 61.0);
+        assert!((score("더비온", 8) - kw_slot).abs() < 1e-12);
+        assert!((score("더비온", 0) - se_slot).abs() < 1e-12, "0 이면 짧은 낱말도 의미형");
+        assert!((score("국정감사 지적사항", 8) - kw_slot).abs() < 1e-12);
+        assert!((score("국정감사 지적사항", 6) - se_slot).abs() < 1e-12);
+        assert!((score("국정감사 지적사항", 10) - kw_slot).abs() < 1e-12);
+        assert_eq!(HybridParams::default().keyword_max_chars, query::KEYWORD_MAX_CHARS);
     }
 
     #[test]

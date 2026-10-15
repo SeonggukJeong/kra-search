@@ -37,6 +37,16 @@ impl ParsedQuery {
         }
     }
 
+    /// 문턱 `max_chars` 로 다시 정한 유형. 0 이면 나누지 않는다(모두 의미형) — M2 평가가 "나누지 않음"과 견줄 수 있게.
+    /// 그 밖에는 `parse` 와 같은 글(날짜 표현을 모두 뺀 글)에 `classify_with`.
+    pub fn kind_with(&self, max_chars: usize) -> QueryKind {
+        if max_chars == 0 {
+            QueryKind::Semantic
+        } else {
+            classify_with(&self.text_without(|_| true), max_chars)
+        }
+    }
+
     /// 날짜 칩(가산할 기간). 미래 표현은 칩이 아니다.
     pub fn chips(&self) -> impl Iterator<Item = &DateSpan> {
         self.dates.iter().filter(|d| d.range.is_some())
@@ -85,5 +95,17 @@ mod tests {
         let q = p("내년 사업계획");
         assert_eq!(q.chips().count(), 0);
         assert_eq!(q.text_without(|s| s.range.is_some()), "내년 사업계획");
+    }
+
+    /// 유형 나누기는 평가의 훑기 축이다 — 0 이면 나누지 않음(모두 의미형), 그 밖에는 `parse` 와 같은 글로 `classify_with`.
+    #[test]
+    fn kind_with_sweeps_the_threshold_on_the_same_text() {
+        let q = p("작년 국정감사 지적사항");
+        assert_eq!(q.kind_with(0), QueryKind::Semantic, "0 = 나누지 않음");
+        assert_eq!(q.kind_with(6), QueryKind::Semantic);
+        assert_eq!(q.kind_with(8), QueryKind::Keyword, "날짜를 뺀 '국정감사 지적사항' 8자");
+        assert_eq!(q.kind_with(KEYWORD_MAX_CHARS), q.kind, "기본 문턱은 parse 와 같다");
+        assert_eq!(p("더비온").kind_with(0), QueryKind::Semantic);
+        assert_eq!(p("더비온").kind_with(10), QueryKind::Keyword);
     }
 }
