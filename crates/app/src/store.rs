@@ -68,6 +68,12 @@ fn remove_file_if_exists(p: &Path) -> Result<(), String> {
 /// 반대 순서면 새 meta 옆에 옛 키워드 색인이 남는다(try_open 은 opstamp 가 다르면 어느 쪽이든 다시 만들지만, 남기지 않는 편이 낫다).
 pub fn reset_store(home: &Home) -> Result<(), String> {
     remove_keyword_dir(home)?;
+    // 의미 검색 벡터도 지운다 — 남으면 새 meta 의 내용 id 와 엉킨다(DEC-048).
+    match std::fs::remove_dir_all(home.vectors_dir()) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("의미 검색 색인을 지우지 못함: {e}")),
+    }
     let db = home.meta_db();
     remove_file_if_exists(&db)?;
     for ext in ["-wal", "-shm"] {

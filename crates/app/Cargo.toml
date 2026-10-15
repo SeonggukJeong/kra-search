@@ -13,10 +13,14 @@ extract = { path = "../extract" }
 index = { path = "../index" }
 crawler = { path = "../crawler" }
 platform = { path = "../platform" }
+embed = { path = "../embed" }
+vector = { path = "../vector" }
+doc = { path = "../doc" }
+serde_json.workspace = true
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
-serde_json.workspace = true
 # 시험에서 meta.db 의 행을 직접 망가뜨리는 데만 쓴다(index 와 같은 SQLCipher 빌드).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

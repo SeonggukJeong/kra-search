@@ -2,6 +2,7 @@
 mod pipeline;
 mod search;
 mod store;
+pub mod vectors;
 
 // 워커가 내보내는 글자 상한(extract)과 키워드 본문 상한(index)은 같은 값이어야 한다(DEC-036) — 다르면 컴파일되지 않는다.
 const _: () = assert!(extract::MAX_DOC_CHARS == index::keyword::BODY_MAX_CHARS);

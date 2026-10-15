@@ -115,12 +115,16 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "crawler",
+ "doc",
+ "embed",
  "extract",
  "index",
  "platform",
  "rusqlite",
  "serde_json",
  "tempfile",
+ "vector",
+ "xxhash-rust",
 ]
 
 [[package]]
