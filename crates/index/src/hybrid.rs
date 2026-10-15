@@ -21,7 +21,9 @@ pub enum Combine {
     CardOnly,
 }
 
+/// 빠진 필드는 기본값으로 읽는다(`serde(default)`) — 필드가 생기기 전에 저장한 params JSON 도 읽히게.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct HybridParams {
     pub rrf_k: f64,
     /// [키워드형 질의, 의미형 질의]
@@ -675,6 +677,22 @@ mod tests {
         let h = fuse(&[(1, 1.0), (2, 1.0)], &Semantic::default(), &q, &p, today(), &m, &none());
         assert!((boost_of(&h, 1) - 2.0 / 11.0).abs() < 1e-12);
         assert!((boost_of(&h, 2) - 2.0 / 11.0).abs() < 1e-12, "합이 아니라 최댓값");
+    }
+
+    #[test]
+    fn old_params_json_without_new_fields_loads_with_defaults() {
+        // keyword_max_chars·date_title_conflict·date_recurring 가 생기기 전의 params JSON
+        let old = r#"{"rrf_k":30.0,"w_keyword":[1.0,1.0],"w_semantic":[1.0,1.5],"combine":"Max","floor":0.2,
+            "keyword":{"title":3.0,"filename":2.5,"heading":2.0,"body":1.0,"bigram":0.5},"date_exact":2.0,"date_vague":0.5,
+            "strip_relative":true,"strip_absolute":false,"recency":0.0,"phrase":0.0,"keyword_limit":200,"card_limit":200,
+            "chunk_top":200,"chunk_min":1000,"chunk_frac":0.02}"#;
+        let p: HybridParams = serde_json::from_str(old).expect("옛 JSON");
+        let d = HybridParams::default();
+        assert_eq!((p.rrf_k, p.combine, p.w_semantic), (30.0, Combine::Max, [1.0, 1.5]));
+        assert_eq!(p.keyword_max_chars, d.keyword_max_chars);
+        assert_eq!((p.date_title_conflict, p.date_recurring), (d.date_title_conflict, d.date_recurring));
+        let back: HybridParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
     }
 
     #[test]

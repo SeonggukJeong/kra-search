@@ -76,11 +76,12 @@ fn main() {
             eprintln!("{report}");
             std::process::exit(if pass { 0 } else { 1 });
         }
-        let fixed = a.params.as_ref().map(|p| serde_json::from_str(&std::fs::read_to_string(p).unwrap()).expect("params JSON"));
+        // params.json = 매개변수 + card_tokens(고른 카드 상한). card_tokens 가 있으면 다시 정하지 않는다.
+        let fixed: Option<hybrid::Saved> = a.params.as_ref().map(|p| serde_json::from_str(&std::fs::read_to_string(p).unwrap()).expect("params JSON"));
         let o = hybrid::run(&w, &queries, fixed);
         let out = a.out.clone().unwrap_or_else(|| PathBuf::from("docs/m2/eval-hybrid.md"));
         std::fs::write(&out, &o.report).unwrap();
-        std::fs::write("docs/m2/params.json", serde_json::to_string_pretty(&o.params).unwrap() + "\n").unwrap();
+        std::fs::write("docs/m2/params.json", serde_json::to_string_pretty(&hybrid::Saved { params: o.params.clone(), card_tokens: Some(o.cap) }).unwrap() + "\n").unwrap();
         if let Some(d) = &a.dump {
             std::fs::write(d, serde_json::to_string(&o.ranks).unwrap()).unwrap();
         }

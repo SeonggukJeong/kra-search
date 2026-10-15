@@ -28,8 +28,8 @@ const CAPS: [usize; 2] = [256, 128];
 const EPS: f64 = 0.005;
 /// 좌표 하강 회차 상한(P19) — 한 회차를 다 돌아도 바뀐 것이 없으면 그 전에 멈춘다.
 const MAX_PASSES: usize = 10;
-/// 유형 나누기 문턱 후보(0 = 나누지 않음, 사용자 결정 2026-10-15)
-const SPLITS: [usize; 4] = [0, 6, 8, 10];
+/// 유형을 나누는 쪽의 문턱 후보. 나누지 않는 쪽(0)은 따로 하강해 견준다(사용자 결정 2026-10-15).
+const SPLIT_ARM: [usize; 3] = [6, 8, 10];
 
 pub struct HArgs {
     pub model: PathBuf,
@@ -312,15 +312,31 @@ fn accepts(s: f64, hits: usize, best_s: f64, best_hits: usize) -> bool {
 
 type Setter = Box<dyn Fn(&mut HybridParams)>;
 
-/// 좌표 하강 축: (이름, [(값 표시, 바꾸기)])
-fn axes() -> Vec<(&'static str, Vec<(String, Setter)>)> {
+/// 조정용 질의(스펙 §6.1: 조정용으로 고르고 검증용으로 판정). 값을 고르는 함수(좌표 하강·결정 규칙)는 이 타입만 받는다 —
+/// 검증용 질의가 고르는 데 섞이지 않게 타입으로 막는다. `split_queries` 만 만든다.
+pub struct Tune<'a>(Vec<&'a Query>);
+/// 검증용 질의 — 판정과 보고에만 쓴다.
+pub struct Hold<'a>(Vec<&'a Query>);
+
+/// qid 해시로 유형마다 60:40(DEC-051).
+fn split_queries(queries: &[Query]) -> (Tune<'_>, Hold<'_>) {
+    let ids = tune_split(queries.iter().map(|q| (q.qid.as_str(), q.kind.as_str())));
+    let (t, h): (Vec<&Query>, Vec<&Query>) = queries.iter().partition(|q| ids.contains(&q.qid));
+    (Tune(t), Hold(h))
+}
+
+/// 좌표 하강 축: (이름, [(값 표시, 바꾸기)]). `split_arm` = 유형을 나누는 쪽(문턱 6·8·10 과 키워드형 가중치 축이 있다).
+/// 나누지 않는 쪽(문턱 0)은 두 축을 뺀다 — 모든 검색어가 의미형 가중치([1])를 쓰므로 키워드형 가중치([0])는 효과가 없다.
+fn axes(split_arm: bool) -> Vec<(&'static str, Vec<(String, Setter)>)> {
     fn ax<T: std::fmt::Debug + Copy + 'static>(name: &'static str, vals: &[T], set: fn(&mut HybridParams, T)) -> (&'static str, Vec<(String, Setter)>) {
         (name, vals.iter().map(|&x| (format!("{x:?}"), Box::new(move |p: &mut HybridParams| set(p, x)) as Setter)).collect())
     }
-    vec![
-        ax("rrf_k", &[10.0, 20.0, 30.0, 45.0, 60.0], |p, x| p.rrf_k = x),
-        ax("keyword_max_chars", &SPLITS, |p, x| p.keyword_max_chars = x),
-        ax("w_semantic[키워드형]", &[0.25, 0.5, 1.0, 1.5, 2.0], |p, x| p.w_semantic[0] = x),
+    let mut v = vec![ax("rrf_k", &[10.0, 20.0, 30.0, 45.0, 60.0], |p, x| p.rrf_k = x)];
+    if split_arm {
+        v.push(ax("keyword_max_chars", &SPLIT_ARM, |p, x| p.keyword_max_chars = x));
+        v.push(ax("w_semantic[키워드형]", &[0.25, 0.5, 1.0, 1.5, 2.0], |p, x| p.w_semantic[0] = x));
+    }
+    v.extend([
         ax("w_semantic[의미형]", &[0.5, 1.0, 1.5, 2.0, 3.0], |p, x| p.w_semantic[1] = x),
         ax("combine", &[Combine::ChunkElseCard, Combine::Max, Combine::Separate, Combine::CardOnly], |p, x| p.combine = x),
         ax("floor", &[0.0f32, 0.2, 0.25, 0.3, 0.35, 0.4], |p, x| p.floor = x),
@@ -334,26 +350,39 @@ fn axes() -> Vec<(&'static str, Vec<(String, Setter)>)> {
         ax("date_recurring", &[0.0, 0.5], |p, x| p.date_recurring = x),
         ax("recency", &[0.0, 0.05, 0.1, 0.2], |p, x| p.recency = x),
         ax("phrase", &[0.0, 0.25, 0.5, 1.0], |p, x| p.phrase = x),
-    ]
+    ]);
+    v
+}
+
+/// 좌표 하강 한 갈래의 결과.
+struct Arm {
+    params: HybridParams,
+    /// 조정용 매크로 nDCG@10 · 첫 페이지 적중 수
+    score: f64,
+    hits: usize,
+    passes: usize,
+    converged: bool,
+    trace: Vec<String>,
 }
 
 /// 조정용 매크로 nDCG 를 올리는 쪽으로 한 축씩(`accepts`). 한 회차를 다 돌아도 바뀐 것이 없을 때까지, 최대 MAX_PASSES 회차.
-/// 반환: (고른 값, 돈 회차 수, 수렴했는가)
-fn descend(w: &World, base: &Cfg, tune: &[&Query], trace: &mut Vec<String>) -> (HybridParams, usize, bool) {
+fn descend(w: &World, base: &Cfg, tune: &Tune, split_arm: bool) -> Arm {
+    let tune = &tune.0;
     let score = |p: &HybridParams| {
         let per = evaluate(w, &Cfg { params: p.clone(), ..base.clone() }, tune);
         (macro_ndcg(&per, tune), fp_hits(&per, tune))
     };
     let mut best = base.params.clone();
     let (mut best_s, mut best_h) = score(&best);
-    trace.push(format!("시작(기본값) nDCG {best_s:.4} · 첫 페이지 {best_h}/{}", tune.len()));
+    let mut trace = vec![format!("시작 nDCG {best_s:.4} · 첫 페이지 {best_h}/{}", tune.len())];
     let (mut passes, mut converged) = (0, false);
+    let axes = axes(split_arm);
     for pass in 1..=MAX_PASSES {
         passes = pass;
         let mut changed = false;
-        for (name, vals) in axes() {
+        for (name, vals) in &axes {
             let mut cand: Option<(f64, usize, String, HybridParams)> = None;
-            for (label, set) in &vals {
+            for (label, set) in vals {
                 let mut p = best.clone();
                 set(&mut p);
                 if p == best {
@@ -377,7 +406,110 @@ fn descend(w: &World, base: &Cfg, tune: &[&Query], trace: &mut Vec<String>) -> (
             break;
         }
     }
-    (best, passes, converged)
+    Arm { params: best, score: best_s, hits: best_h, passes, converged, trace }
+}
+
+/// 유형 나누기 결정(사용자 결정 2026-10-15): 나누는 쪽(문턱 6·8·10)과 나누지 않는 쪽(0)을 각각 좌표 하강으로 끝까지 고른 뒤,
+/// 나누는 쪽이 `accepts`(조정용 매크로 +EPS 넘게, 첫 페이지 적중 줄지 않음)로 이길 때만 나눈다. 아니면 0 쪽의 값 전체를 쓴다.
+/// 반환: (나누는 쪽, 나누지 않는 쪽, 나누는 쪽을 골랐는가)
+fn choose_split(w: &World, base: &Cfg, tune: &Tune) -> (Arm, Arm, bool) {
+    let split = descend(w, base, tune, true);
+    // 0 쪽은 키워드형 가중치를 의미형과 같게 두고 출발한다(효과는 없지만 보고서·params.json 에 쓰지 않는 값이 남지 않게).
+    let mut p0 = HybridParams { keyword_max_chars: 0, ..base.params.clone() };
+    p0.w_semantic[0] = p0.w_semantic[1];
+    p0.w_keyword[0] = p0.w_keyword[1];
+    let mut zero = descend(w, &Cfg { params: p0, ..base.clone() }, tune, false);
+    // 0 쪽 하강은 [1] 만 움직였다 — [0] 을 [1] 과 맞춰 쓰지 않는 조정값이 남지 않게 한다.
+    zero.params.w_semantic[0] = zero.params.w_semantic[1];
+    zero.params.w_keyword[0] = zero.params.w_keyword[1];
+    let win = accepts(split.score, split.hits, zero.score, zero.hits);
+    (split, zero, win)
+}
+
+/// 날짜 표현 빼기 결정(DEC-051): 종류마다 조정용 temporal 로 견준다. 차이가 EPS 이내면 기본값, 빼는 쪽이 EPS 넘게 높고
+/// 첫 페이지 적중이 줄지 않으면 뺀다, 그 밖에는 빼지 않는다. `fixed` 면 바꾸지 않는다. 반환: 보고서 표 줄.
+fn strip_rule(w: &World, base: &Cfg, params: &mut HybridParams, tune: &Tune, fixed: bool) -> Vec<String> {
+    let temporal: Vec<&Query> = tune.0.iter().copied().filter(|q| q.kind == "temporal").collect();
+    let d = HybridParams::default();
+    let mut notes = Vec::new();
+    for (label, rel) in [("상대 표현", true), ("숫자 해", false)] {
+        let with = |on: bool| {
+            let mut p = params.clone();
+            if rel {
+                p.strip_relative = on;
+            } else {
+                p.strip_absolute = on;
+            }
+            let per = evaluate(w, &Cfg { params: p, ..base.clone() }, &temporal);
+            (mean(per.values().map(|x| x.0)), fp_hits(&per, &temporal))
+        };
+        let ((on, on_h), (off, off_h)) = (with(true), with(false));
+        let (cur, def) = if rel { (params.strip_relative, d.strip_relative) } else { (params.strip_absolute, d.strip_absolute) };
+        let (keep, why) = if fixed {
+            (cur, "고정")
+        } else if temporal.is_empty() {
+            (def, "판단 불가(조정용 temporal 질의 없음) — 기본값")
+        } else if (on - off).abs() <= EPS {
+            (def, "차이 0.005 이내 — 기본값")
+        } else if on > off && on_h >= off_h {
+            (true, "뺀다")
+        } else if on > off {
+            (false, "빼지 않는다(첫 페이지 적중 줄어듦)")
+        } else {
+            (false, "빼지 않는다(회귀)")
+        };
+        if rel {
+            params.strip_relative = keep;
+        } else {
+            params.strip_absolute = keep;
+        }
+        let n = temporal.len();
+        notes.push(format!("| {label} | {on:.4} · {on_h}/{n} | {off:.4} · {off_h}/{n} | {} | {why} |", if keep { "뺀다" } else { "안 뺀다" }));
+    }
+    notes
+}
+
+/// 카드 상한 128 판정(결정 #27)의 숫자들 — 질의 쪽 숫자는 조정용만.
+struct CapRule {
+    cap: usize,
+    why: String,
+    cut: usize,
+    cards_n: usize,
+    share: f64,
+    overall: f64,
+    kra_drop: Vec<(String, f64)>,
+}
+
+/// 잘리는 비율은 문서(카드) 기준이라 질의와 무관하다. nDCG 차이는 조정용 질의로만 잰다.
+fn card_cap_rule(w: &World, chosen: &Cfg, tune: &Tune) -> CapRule {
+    let tune = &tune.0;
+    let with_cap = |cap: usize| evaluate(w, &Cfg { cap, ..chosen.clone() }, tune);
+    let (c256, c128) = (with_cap(256), with_cap(128));
+    let cards_n = w.card_tokens.iter().filter(|&&t| t > 0).count();
+    let cut = w.card_tokens.iter().filter(|&&t| t > 128).count();
+    let share = cut as f64 / cards_n.max(1) as f64;
+    let overall = all_mean(&c128, tune) - all_mean(&c256, tune);
+    let kra_drop: Vec<(String, f64)> = ["kra", "kra-deep", "kra-plain"]
+        .iter()
+        .filter_map(|k| Some((k.to_string(), kind_mean(&c128, tune, k)? - kind_mean(&c256, tune, k)?)))
+        .collect();
+    let (cap, why) = if share < 0.25 {
+        (256, format!("판단 불가 — 128에서 잘리는 카드 {:.1}% < 25%", share * 100.0))
+    } else if overall <= -0.003 || kra_drop.iter().any(|(_, d)| *d <= -0.01) {
+        (256, "하락 — 256 유지".to_string())
+    } else {
+        (128, "하락 없음 — 128 로 바꾼다".to_string())
+    };
+    CapRule { cap, why, cut, cards_n, share, overall, kra_drop }
+}
+
+/// 데이터 형식 뒷부분(본문 ③, DEC-051): 조정용 데이터 아닌 질의 매크로 차이(켬−끔). −0.003 이하면 기본 끔 안을 올린다.
+fn tail_rule(w: &World, chosen: &Cfg, tune: &Tune) -> (f64, bool) {
+    let non_data: Vec<&Query> = tune.0.iter().copied().filter(|q| !q.kind.starts_with("data-")).collect();
+    let on = evaluate(w, chosen, &non_data);
+    let off = evaluate(w, &Cfg { tail: false, ..chosen.clone() }, &non_data);
+    let d = macro_ndcg(&on, &non_data) - macro_ndcg(&off, &non_data);
+    (d, d <= -0.003)
 }
 
 /// 승·무·패(질의별 nDCG@10, 차이 1e-9 이하는 무)
@@ -403,6 +535,16 @@ fn kind_truth(kind: &str) -> QueryKind {
     }
 }
 
+/// `docs/m2/params.json` 의 모양: 매개변수(평평하게) + 고른 카드 상한. `--params` 로 다시 읽으면 카드 상한을 다시 정하지 않고
+/// 이 값을 쓴다(없으면 정한다). 제품은 `HybridParams` 로만 읽어도 된다 — 모르는 필드 `card_tokens` 는 무시된다.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct Saved {
+    #[serde(flatten)]
+    pub params: HybridParams,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_tokens: Option<usize>,
+}
+
 pub struct Outcome {
     pub report: String,
     pub params: HybridParams,
@@ -410,87 +552,30 @@ pub struct Outcome {
     pub ranks: BTreeMap<String, Vec<String>>,
 }
 
-pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome {
-    let tune_ids = tune_split(queries.iter().map(|q| (q.qid.as_str(), q.kind.as_str())));
+fn arm_row(s: &mut String, label: &str, p: &HybridParams, w: &World, base: &Cfg, tune: &[&Query], hold: &[&Query]) {
+    let per = evaluate(w, &Cfg { params: p.clone(), ..base.clone() }, &tune.iter().chain(hold.iter()).copied().collect::<Vec<_>>());
+    writeln!(s, "| {label} | {:.4} | {} ({}/{}) | {:.4} | {} |", macro_ndcg(&per, tune), pct(fp_rate(&per, tune)), fp_hits(&per, tune), tune.len(), macro_ndcg(&per, hold), pct(fp_rate(&per, hold))).unwrap();
+}
+
+pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
+    let (tune_q, hold_q) = split_queries(queries);
     let all: Vec<&Query> = queries.iter().collect();
-    let tune: Vec<&Query> = queries.iter().filter(|q| tune_ids.contains(&q.qid)).collect();
-    let hold: Vec<&Query> = queries.iter().filter(|q| !tune_ids.contains(&q.qid)).collect();
+    let (tune, hold) = (&tune_q.0, &hold_q.0);
     let base = Cfg { params: HybridParams::default(), cap: plan::CARD_TOKENS, tail: true, semantic: true };
     let is_fixed = fixed.is_some();
-    let mut trace = Vec::new();
-    let (mut params, passes) = match fixed {
-        Some(p) => {
-            trace.push("고정 매개변수(--params) — 고르지 않고 결정 규칙도 적용하지 않음(표만 보인다)".into());
-            (p, None)
-        }
+    let fixed_cap = fixed.as_ref().and_then(|f| f.card_tokens);
+    // 고르기: 나누는 쪽·나누지 않는 쪽을 각각 하강해 견준다(고정이면 하지 않음).
+    let (mut params, arms) = match fixed {
+        Some(f) => (f.params, None),
         None => {
-            let (p, n, conv) = descend(w, &base, &tune, &mut trace);
-            (p, Some((n, conv)))
+            let (split, zero, win) = choose_split(w, &base, &tune_q);
+            let p = if win { split.params.clone() } else { zero.params.clone() };
+            (p, Some((split, zero, win)))
         }
     };
+    let strip_notes = strip_rule(w, &base, &mut params, &tune_q, is_fixed);
+    let chosen = Cfg { params: params.clone(), cap: fixed_cap.unwrap_or(plan::CARD_TOKENS), tail: true, semantic: true };
     let mut s = String::new();
-
-    // 날짜 빼기 규칙(DEC-051): 그 종류를 빼면 temporal 조정용 nDCG 가 떨어지면 빼지 않는다.
-    let temporal: Vec<&Query> = tune.iter().copied().filter(|q| q.kind == "temporal").collect();
-    let mut strip_notes = Vec::new();
-    for (label, rel) in [("상대 표현", true), ("숫자 해", false)] {
-        let with = |on: bool| {
-            let mut p = params.clone();
-            if rel {
-                p.strip_relative = on;
-            } else {
-                p.strip_absolute = on;
-            }
-            let per = evaluate(w, &Cfg { params: p, ..base.clone() }, &temporal);
-            (mean(per.values().map(|x| x.0)), fp_rate(&per, &temporal))
-        };
-        let ((on, on_fp), (off, off_fp)) = (with(true), with(false));
-        let cur = if rel { params.strip_relative } else { params.strip_absolute };
-        let (keep, why) = if is_fixed {
-            (cur, "고정")
-        } else if temporal.is_empty() {
-            (cur, "판단 불가(조정용 temporal 질의 없음) — 그대로")
-        } else if on + 1e-9 >= off {
-            (true, "뺀다")
-        } else {
-            (false, "빼지 않는다(회귀)")
-        };
-        if rel {
-            params.strip_relative = keep;
-        } else {
-            params.strip_absolute = keep;
-        }
-        strip_notes.push(format!("| {label} | {on:.4} · {} | {off:.4} · {} | {why} |", pct(on_fp), pct(off_fp)));
-    }
-
-    // 유형 나누기 규칙(사용자 결정 2026-10-15): 나누기(6·8·10자)는 나누지 않음(0)보다 조정용 매크로 nDCG 가 EPS 넘게 높고
-    // 첫 페이지 적중이 줄지 않을 때만 남는다. 좌표 하강은 기본값(8)에서 출발한다 — 가중치가 키워드형·의미형 같으면 나누기는
-    // 아무 차이가 없어 0 에서 출발하면 한 번도 움직이지 못하기 때문. 그래서 하강이 끝난 뒤 0 과 다시 견준다.
-    let split_rows: Vec<(usize, Per)> = SPLITS
-        .iter()
-        .map(|&n| (n, evaluate(w, &Cfg { params: HybridParams { keyword_max_chars: n, ..params.clone() }, ..base.clone() }, &all)))
-        .collect();
-    let split_why = {
-        let none = &split_rows[0].1;
-        let cur = params.keyword_max_chars;
-        let cur_per = &split_rows.iter().find(|(n, _)| *n == cur).map(|x| &x.1);
-        if is_fixed {
-            "고정".to_string()
-        } else if cur == 0 {
-            "좌표 하강이 0(나누지 않음)을 골랐다".to_string()
-        } else if let Some(cp) = cur_per {
-            if accepts(macro_ndcg(cp, &tune), fp_hits(cp, &tune), macro_ndcg(none, &tune), fp_hits(none, &tune)) {
-                format!("{cur}자 나누기가 나누지 않음보다 뚜렷이 낫다 — 유지")
-            } else {
-                params.keyword_max_chars = 0;
-                format!("{cur}자 나누기가 나누지 않음보다 뚜렷이 낫지 않다 — 0(나누지 않음)으로")
-            }
-        } else {
-            // 후보 밖의 값(고정 값이 아닌데 SPLITS 밖은 생기지 않는다)
-            format!("{cur}자 — 후보 밖, 그대로")
-        }
-    };
-    let chosen = Cfg { params: params.clone(), cap: plan::CARD_TOKENS, tail: true, semantic: true };
 
     // 기준선과 판정
     let keyword_only = Cfg {
@@ -519,27 +604,29 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome
     };
 
     writeln!(s, "# M2 하이브리드 평가 (자동 생성: `cargo run -p m0eval --release -- --hybrid --eval eval/public --eval eval/kra --eval eval/data`)\n").unwrap();
-    writeln!(s, "- 문서 {}건 · 질의 {}개(조정용 {} · 검증용 {}) · 기준 시점 {} · 카드 상한 {} · 실험과 제품이 같은 검색 코어(index::hybrid)", w.docs.len(), queries.len(), tune.len(), hold.len(), format_ymd(w.now), plan::CARD_TOKENS).unwrap();
+    writeln!(s, "- 문서 {}건 · 질의 {}개(조정용 {} · 검증용 {}) · 기준 시점 {} · 카드 상한 {} · 실험과 제품이 같은 검색 코어(index::hybrid)", w.docs.len(), queries.len(), tune.len(), hold.len(), format_ymd(w.now), chosen.cap).unwrap();
     writeln!(s, "- 첫 페이지 적중 = 정답 문서가 하나라도 상위 {FIRST_PAGE} 안(사용자 원칙: \"항상 최상위가 아니어도 첫 페이지에 정확한 결과를\"). 적중률 = 질의 비율.").unwrap();
     writeln!(s, "- 일치 검사(실험 = 제품): `docs/m2/parity.md` (`--parity <앱 덤프>` 로 만든다, DEC-052)\n").unwrap();
 
     writeln!(s, "## 결정 규칙(숫자로만, DEC-051)\n").unwrap();
-    writeln!(s, "- 조정용(qid 해시, 유형마다 60%)으로만 고르고 검증용(40%)으로 판정한다. 목표 = 조정용 유형별 매크로 nDCG@10.").unwrap();
+    writeln!(s, "- 값은 조정용 질의(qid 해시, 유형마다 60%)로만 고르고, 합격 판정은 검증용(40%)으로만 한다. 목표 = 조정용 유형별 매크로 nDCG@10. \"참고(전체)\" 숫자는 판정에 쓰지 않는다.").unwrap();
     writeln!(s, "- 좌표 하강: 한 축씩 후보를 견줘, 조정용 매크로 nDCG@10 이 지금보다 {EPS} 넘게 높고 **조정용 첫 페이지 적중 수가 줄지 않는** 후보 중 가장 높은 것으로 바꾼다. 한 회차를 다 돌아 바뀐 것이 없으면 멈춘다(상한 {MAX_PASSES}회차).").unwrap();
-    writeln!(s, "- 유형 나누기(keyword_max_chars): 하강이 고른 문턱이 0(나누지 않음)보다 같은 규칙(+{EPS}, 첫 페이지 적중 줄지 않음)으로 낫지 않으면 0.").unwrap();
-    writeln!(s, "- 날짜 표현 빼기: 종류마다, 빼면 조정용 temporal nDCG 가 떨어지면 빼지 않는다.").unwrap();
-    writeln!(s, "- 카드 상한 128(결정 #27): 128에서 잘리는 카드가 25% 미만이면 판단 불가(256), 전체 nDCG −0.003 이하 또는 마사회 유형 −0.01 이하 하락이면 256, 아니면 128.").unwrap();
-    writeln!(s, "- 데이터 뒷부분(본문 ③): 켰을 때 데이터 아닌 질의 매크로가 0.3%p 이상 떨어지면 기본 끔 안을 사용자에게 올린다.\n").unwrap();
+    writeln!(s, "- 유형 나누기(keyword_max_chars): 나누는 쪽(문턱 6·8·10)과 나누지 않는 쪽(0)을 각각 좌표 하강으로 끝까지 고른 뒤, 나누는 쪽이 같은 채택 규칙(+{EPS} 넘게, 첫 페이지 적중 줄지 않음)으로 이길 때만 나눈다. 아니면 0 쪽의 값 전체를 쓰고 키워드형 가중치([0])는 의미형([1])과 같게 둔다.").unwrap();
+    writeln!(s, "- 날짜 표현 빼기: 종류마다 조정용 temporal 로 견줘, 차이가 {EPS} 이내면 기본값, 빼는 쪽이 {EPS} 넘게 높고 첫 페이지 적중이 줄지 않으면 뺀다, 그 밖에는 빼지 않는다.").unwrap();
+    writeln!(s, "- 카드 상한 128(결정 #27): 128에서 잘리는 카드(문서 기준)가 25% 미만이면 판단 불가(256), 조정용 전체 nDCG −0.003 이하 또는 마사회 유형 −0.01 이하 하락이면 256, 아니면 128.").unwrap();
+    writeln!(s, "- 데이터 뒷부분(본문 ③): 켰을 때 조정용 데이터 아닌 질의 매크로가 0.3%p 이상 떨어지면 기본 끔 안을 사용자에게 올린다.\n").unwrap();
 
-    writeln!(s, "## 1. 합격 판정\n").unwrap();
-    let (k_h, h_h) = (macro_ndcg(&per[0], &hold), macro_ndcg(&per[3], &hold));
-    let (wn, tn, ln) = wtl(&per[3], &per[0], &hold);
-    writeln!(s, "| 기준 | 값 | 판정 |\n|---|---|---|").unwrap();
+    writeln!(s, "## 1. 합격 판정(검증용)\n").unwrap();
+    let (k_h, h_h) = (macro_ndcg(&per[0], hold), macro_ndcg(&per[3], hold));
+    let (wn, tn, ln) = wtl(&per[3], &per[0], hold);
+    writeln!(s, "| 기준 | 검증용 값 | 참고(전체) | 판정 |\n|---|---|---|---|").unwrap();
     writeln!(
         s,
-        "| 하이브리드 > 키워드 단독(검증용 매크로 nDCG@10) | {h_h:.4} vs {k_h:.4} · 첫 페이지 {} vs {} · 승 {wn} 무 {tn} 패 {ln} | {} |",
-        pct(fp_rate(&per[3], &hold)),
-        pct(fp_rate(&per[0], &hold)),
+        "| 하이브리드 > 키워드 단독(매크로 nDCG@10) | {h_h:.4} vs {k_h:.4} · 첫 페이지 {} vs {} · 승 {wn} 무 {tn} 패 {ln} | {:.4} vs {:.4} | {} |",
+        pct(fp_rate(&per[3], hold)),
+        pct(fp_rate(&per[0], hold)),
+        macro_ndcg(&per[3], &all),
+        macro_ndcg(&per[0], &all),
         if h_h > k_h { "통과" } else { "**실패**" }
     )
     .unwrap();
@@ -547,92 +634,113 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome
     let dates_h: Vec<&Query> = hold.iter().copied().filter(|q| q.kind == "date").collect();
     let (d_on, d_off) = (mean(dates.iter().map(|q| per[3][&q.qid].0)), mean(dates.iter().map(|q| per[4][&q.qid].0)));
     let (dh_on, dh_off) = (mean(dates_h.iter().map(|q| per[3][&q.qid].0)), mean(dates_h.iter().map(|q| per[4][&q.qid].0)));
-    let (dw, dt, dl) = wtl(&per[3], &per[4], &dates);
+    let (dw, dt, dl) = wtl(&per[3], &per[4], &dates_h);
     writeln!(
         s,
-        "| 날짜 가산 켬 > 끔(date 전체 {} · 검증용 {}) | 전체 {d_on:.4} vs {d_off:.4} · 검증용 {dh_on:.4} vs {dh_off:.4} · 첫 페이지 {} vs {} · 승 {dw} 무 {dt} 패 {dl} | {} |",
-        dates.len(),
+        "| 날짜 가산 켬 > 끔(date 검증용 {}) | {dh_on:.4} vs {dh_off:.4} · 첫 페이지 {} vs {} · 승 {dw} 무 {dt} 패 {dl} | date 전체 {}: {d_on:.4} vs {d_off:.4} | {} |",
         dates_h.len(),
-        pct(fp_rate(&per[3], &dates)),
-        pct(fp_rate(&per[4], &dates)),
-        if d_on > d_off && dh_on >= dh_off { "통과" } else { "**실패**" }
+        pct(fp_rate(&per[3], &dates_h)),
+        pct(fp_rate(&per[4], &dates_h)),
+        dates.len(),
+        if dates_h.is_empty() {
+            "판단 불가(검증용 date 없음)"
+        } else if dh_on > dh_off {
+            "통과"
+        } else {
+            "**실패**"
+        }
     )
     .unwrap();
+    let non_date_h: Vec<&Query> = hold.iter().copied().filter(|q| q.kind != "date").collect();
     let non_date: Vec<&Query> = all.iter().copied().filter(|q| q.kind != "date").collect();
-    let (nd_on, nd_off) = (macro_ndcg(&per[3], &non_date), macro_ndcg(&per[4], &non_date));
+    let (nd_on, nd_off) = (macro_ndcg(&per[3], &non_date_h), macro_ndcg(&per[4], &non_date_h));
     // 허용 폭 0.003 은 숫자 규칙이다(P20) — 나중에 DEC 로 기록한다.
     writeln!(
         s,
-        "| 날짜 없는 질의가 떨어지지 않음(매크로, 허용 0.003) | {nd_on:.4} vs {nd_off:.4} · 첫 페이지 {} vs {} | {} |",
-        pct(fp_rate(&per[3], &non_date)),
-        pct(fp_rate(&per[4], &non_date)),
+        "| 날짜 없는 질의가 떨어지지 않음(매크로, 허용 0.003) | {nd_on:.4} vs {nd_off:.4} · 첫 페이지 {} vs {} | {:.4} vs {:.4} | {} |",
+        pct(fp_rate(&per[3], &non_date_h)),
+        pct(fp_rate(&per[4], &non_date_h)),
+        macro_ndcg(&per[3], &non_date),
+        macro_ndcg(&per[4], &non_date),
         if nd_on + 0.003 >= nd_off { "통과" } else { "**실패**" }
     )
     .unwrap();
     writeln!(s).unwrap();
 
-    writeln!(s, "## 2. 유형별 nDCG@10 (전체 질의)\n").unwrap();
+    writeln!(s, "## 2. 유형별 nDCG@10 (유형 열은 전체 질의, 참고)\n").unwrap();
     writeln!(s, "| 설정 | 매크로(조정) | 매크로(검증) | 첫 페이지(조정) | 첫 페이지(검증) | {} |", kinds.join(" | ")).unwrap();
     writeln!(s, "|---|---|---|---|---|{}", "---|".repeat(kinds.len())).unwrap();
     for (i, (name, _)) in runs.iter().enumerate() {
         let cells: Vec<String> = kinds.iter().map(|k| kind_mean(&per[i], &all, k).map_or("-".into(), |x| format!("{x:.4}"))).collect();
-        writeln!(s, "| {name} | {:.4} | {:.4} | {} | {} | {} |", macro_ndcg(&per[i], &tune), macro_ndcg(&per[i], &hold), pct(fp_rate(&per[i], &tune)), pct(fp_rate(&per[i], &hold)), cells.join(" | ")).unwrap();
+        writeln!(s, "| {name} | {:.4} | {:.4} | {} | {} | {} |", macro_ndcg(&per[i], tune), macro_ndcg(&per[i], hold), pct(fp_rate(&per[i], tune)), pct(fp_rate(&per[i], hold)), cells.join(" | ")).unwrap();
     }
     writeln!(s, "\n- \"키워드 단독(M2 경로)\"은 제품에서 모델이 없을 때의 경로(검색어 벡터 없음, 날짜 보정 끔)다. `docs/m1/eval-keyword.md` 와 값이 다른 까닭: 파일 이름에 `(id)` 가 붙은 평가 복사본 이름을 쓰고, 추출 제목이 없어 매니페스트 제목으로 채웠던 문서의 제목을 비워 제품처럼 파일 이름을 쓴다.").unwrap();
     writeln!(s).unwrap();
 
     writeln!(s, "## 3. 고른 매개변수\n\n```json\n{}\n```\n", serde_json::to_string_pretty(&params).expect("json")).unwrap();
-    match passes {
-        Some((n, true)) => writeln!(s, "좌표 하강 기록({n}회차 — 마지막 회차는 바뀐 것 없음):\n").unwrap(),
-        Some((n, false)) => writeln!(s, "좌표 하강 기록({n}회차 — **상한에 닿아 멈춤, 수렴 안 함**):\n").unwrap(),
-        None => writeln!(s, "좌표 하강 기록:\n").unwrap(),
+    match &arms {
+        None => writeln!(s, "- 고정 매개변수(--params) — 고르지 않고 유형 나누기·날짜 빼기 규칙도 적용하지 않음(표만 보인다).").unwrap(),
+        Some((split, zero, win)) => {
+            writeln!(s, "### 3.1 유형 나누기 — 나누는 쪽 vs 나누지 않는 쪽(0)\n").unwrap();
+            writeln!(s, "| 갈래 | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|").unwrap();
+            arm_row(&mut s, &format!("나눔(하강이 고른 {}자)", split.params.keyword_max_chars), &split.params, w, &base, tune, hold);
+            arm_row(&mut s, "나누지 않음(0)", &zero.params, w, &base, tune, hold);
+            writeln!(s, "\n나누는 쪽의 다른 문턱(나머지 값은 나누는 쪽 그대로, 참고):\n\n| 문턱 | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|").unwrap();
+            for n in SPLIT_ARM {
+                arm_row(&mut s, &format!("{n}자"), &HybridParams { keyword_max_chars: n, ..split.params.clone() }, w, &base, tune, hold);
+            }
+            writeln!(
+                s,
+                "\n- **결정: keyword_max_chars = {}** ({})\n",
+                params.keyword_max_chars,
+                if *win { "나누는 쪽이 +0.005 넘게 높고 첫 페이지 적중이 줄지 않음 — 나눈다" } else { "나누는 쪽이 뚜렷이 이기지 못함 — 0(나누지 않음) 쪽의 값 전체" }
+            )
+            .unwrap();
+            for (name, arm) in [("나누는 쪽", split), ("나누지 않는 쪽", zero)] {
+                writeln!(
+                    s,
+                    "좌표 하강 기록 — {name}({}회차{}):\n",
+                    arm.passes,
+                    if arm.converged { " — 마지막 회차는 바뀐 것 없음" } else { " — **상한에 닿아 멈춤, 수렴 안 함**" }
+                )
+                .unwrap();
+                for t in &arm.trace {
+                    writeln!(s, "- {t}").unwrap();
+                }
+                writeln!(s).unwrap();
+            }
+        }
     }
-    for t in &trace {
-        writeln!(s, "- {t}").unwrap();
-    }
-    writeln!(s, "\n날짜 표현 빼기(조정용 temporal {}개 nDCG@10 · 첫 페이지 적중률, DEC-051):\n\n| 종류 | 뺌 | 안 뺌 | 결정 |\n|---|---|---|---|", temporal.len()).unwrap();
+    writeln!(s, "### 3.2 날짜 표현 빼기(조정용 temporal nDCG@10 · 첫 페이지 적중, DEC-051)\n\n| 종류 | 뺌 | 안 뺌 | 결정 | 까닭 |\n|---|---|---|---|---|").unwrap();
     for n in &strip_notes {
         writeln!(s, "{n}").unwrap();
     }
-    writeln!(s, "\n유형 나누기 — 나누지 않음(0) vs 6·8·10자(다른 값은 고른 값):\n\n| 문턱 | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|").unwrap();
-    for (n, p) in &split_rows {
-        let label = if *n == 0 { "0(나누지 않음)".to_string() } else { format!("{n}자") };
-        writeln!(s, "| {label} | {:.4} | {} ({}/{}) | {:.4} | {} |", macro_ndcg(p, &tune), pct(fp_rate(p, &tune)), fp_hits(p, &tune), tune.len(), macro_ndcg(p, &hold), pct(fp_rate(p, &hold))).unwrap();
-    }
-    writeln!(s, "\n- **결정: keyword_max_chars = {}** ({split_why})", params.keyword_max_chars).unwrap();
 
-    // 결정 #27: 카드 상한 128
-    let with_cap = |cap: usize| evaluate(w, &Cfg { cap, ..chosen.clone() }, &all);
-    let (c256, c128) = (with_cap(256), with_cap(128));
-    let cards_n = w.card_tokens.iter().filter(|&&t| t > 0).count();
-    let cut = w.card_tokens.iter().filter(|&&t| t > 128).count();
-    let share = cut as f64 / cards_n.max(1) as f64;
-    let overall = all_mean(&c128, &all) - all_mean(&c256, &all);
-    let kra_drop: Vec<(String, f64)> = ["kra", "kra-deep", "kra-plain"]
-        .iter()
-        .filter_map(|k| Some((k.to_string(), kind_mean(&c128, &all, k)? - kind_mean(&c256, &all, k)?)))
-        .collect();
-    let long_q: Vec<&Query> = all.iter().copied().filter(|q| q.relevant.iter().any(|id| w.docs.iter().position(|d| &d.id == id).is_some_and(|i| w.card_tokens[i] > 128))).collect();
-    let (cap, why) = if share < 0.25 {
-        (256, format!("판단 불가 — 128에서 잘리는 카드 {:.1}% < 25%", share * 100.0))
-    } else if overall <= -0.003 || kra_drop.iter().any(|(_, d)| *d <= -0.01) {
-        (256, "하락 — 256 유지".to_string())
-    } else {
-        (128, "하락 없음 — 128 로 바꾼다".to_string())
+    // 결정 #27: 카드 상한 128 — 조정용으로 정한다. --params 에 저장된 값이 있으면 다시 정하지 않는다.
+    let rule = card_cap_rule(w, &chosen, &tune_q);
+    let (cap, why) = match fixed_cap {
+        Some(c) => (c, "고정(params.json 의 card_tokens) — 다시 정하지 않음".to_string()),
+        None => (rule.cap, rule.why.clone()),
     };
+    let (c256, c128) = (evaluate(w, &Cfg { cap: 256, ..chosen.clone() }, &all), evaluate(w, &Cfg { cap: 128, ..chosen.clone() }, &all));
+    let long_q: Vec<&Query> = all.iter().copied().filter(|q| q.relevant.iter().any(|id| w.docs.iter().position(|d| &d.id == id).is_some_and(|i| w.card_tokens[i] > 128))).collect();
     writeln!(s, "\n## 4. 카드 상한 128 판정(결정 #27)\n").unwrap();
     writeln!(
         s,
-        "- 잘리는 카드 {cut}/{cards_n} ({:.1}%) · 전체 nDCG 차이(128−256) {overall:+.4} · 첫 페이지 256 {} · 128 {} · 마사회 유형 {}",
-        share * 100.0,
-        pct(fp_rate(&c256, &all)),
-        pct(fp_rate(&c128, &all)),
-        kra_drop.iter().map(|(k, d)| format!("{k} {d:+.4}")).collect::<Vec<_>>().join(", ")
+        "- 잘리는 카드 {}/{} ({:.1}%) · 조정용 nDCG 차이(128−256) {:+.4} · 조정용 마사회 유형 {} · 조정용 첫 페이지 256 {} · 128 {}",
+        rule.cut,
+        rule.cards_n,
+        rule.share * 100.0,
+        rule.overall,
+        rule.kra_drop.iter().map(|(k, d)| format!("{k} {d:+.4}")).collect::<Vec<_>>().join(", "),
+        pct(fp_rate(&c256, tune)),
+        pct(fp_rate(&c128, tune))
     )
     .unwrap();
+    writeln!(s, "- 참고(전체): nDCG 차이(128−256) {:+.4} · 첫 페이지 256 {} · 128 {}", all_mean(&c128, &all) - all_mean(&c256, &all), pct(fp_rate(&c256, &all)), pct(fp_rate(&c128, &all))).unwrap();
     writeln!(
         s,
-        "- 정답 문서 카드가 128토큰을 넘는 질의 {}개: nDCG@10 256 {:.4} · 128 {:.4} · 첫 페이지 256 {} · 128 {}",
+        "- 참고(전체): 정답 문서 카드가 128토큰을 넘는 질의 {}개: nDCG@10 256 {:.4} · 128 {:.4} · 첫 페이지 256 {} · 128 {}",
         long_q.len(),
         mean(long_q.iter().map(|q| c256[&q.qid].0)),
         mean(long_q.iter().map(|q| c128[&q.qid].0)),
@@ -642,11 +750,10 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome
     .unwrap();
     writeln!(s, "- **결정: {cap}** ({why})").unwrap();
 
-    // 데이터 형식 뒷부분(DEC-051)
-    let non_data: Vec<&Query> = all.iter().copied().filter(|q| !q.kind.starts_with("data-")).collect();
-    let nd_tail = macro_ndcg(&per[3], &non_data) - macro_ndcg(&per[6], &non_data);
+    // 데이터 형식 뒷부분(DEC-051) — 조정용으로 정한다.
+    let (nd_tail, propose) = tail_rule(w, &chosen, &tune_q);
     writeln!(s, "\n## 5. 데이터 형식 뒷부분(본문 ③)\n").unwrap();
-    writeln!(s, "| 유형 | 켬 nDCG@10 | 끔 nDCG@10 | 켬 첫 페이지 | 끔 첫 페이지 |\n|---|---|---|---|---|").unwrap();
+    writeln!(s, "| 유형(참고, 전체) | 켬 nDCG@10 | 끔 nDCG@10 | 켬 첫 페이지 | 끔 첫 페이지 |\n|---|---|---|---|---|").unwrap();
     for k in ["data-deep", "data-head"] {
         let qk: Vec<&Query> = all.iter().copied().filter(|q| q.kind == k).collect();
         let fp = |p: &Per| if qk.is_empty() { "-".to_string() } else { pct(fp_rate(p, &qk)) };
@@ -660,12 +767,14 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome
         )
         .unwrap();
     }
+    let non_data: Vec<&Query> = all.iter().copied().filter(|q| !q.kind.starts_with("data-")).collect();
     writeln!(
         s,
-        "\n- 데이터 아닌 질의 매크로 차이(켬−끔) {nd_tail:+.4} · 첫 페이지 켬 {} · 끔 {} → {}",
+        "\n- 조정용 데이터 아닌 질의 매크로 차이(켬−끔) {nd_tail:+.4} → {} · 참고(전체) 차이 {:+.4} · 첫 페이지 켬 {} · 끔 {}",
+        if propose { "**−0.3%p 이상 떨어짐 — 기본 끔 안을 사용자에게 올린다**" } else { "기본 켬 유지" },
+        macro_ndcg(&per[3], &non_data) - macro_ndcg(&per[6], &non_data),
         pct(fp_rate(&per[3], &non_data)),
-        pct(fp_rate(&per[6], &non_data)),
-        if nd_tail <= -0.003 { "**−0.3%p 이상 떨어짐 — 기본 끔 안을 사용자에게 올린다**" } else { "기본 켬 유지" }
+        pct(fp_rate(&per[6], &non_data))
     )
     .unwrap();
 
@@ -685,13 +794,13 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<HybridParams>) -> Outcome
 
     writeln!(s, "\n## 7. 검색어 유형 분류 정확도(참고용)\n").unwrap();
     writeln!(s, "정답: keyword·abbrev 유형 = 키워드형, 나머지 = 의미형(스펙 §6.3). 질의 유형은 만든 의도라 분류기의 정답과 꼭 같지 않다 — 결정에 쓰지 않는다.\n\n| 문턱 | 맞음 |\n|---|---|").unwrap();
-    for n in SPLITS.iter().filter(|&&n| n > 0) {
-        let ok = all.iter().filter(|q| query::parse(&q.text, w.now, &w.table).kind_with(*n) == kind_truth(&q.kind)).count();
+    for n in SPLIT_ARM {
+        let ok = all.iter().filter(|q| query::parse(&q.text, w.now, &w.table).kind_with(n) == kind_truth(&q.kind)).count();
         writeln!(s, "| {n}자 | {ok}/{} ({:.1}%) |", all.len(), ok as f64 * 100.0 / all.len().max(1) as f64).unwrap();
     }
 
     writeln!(s, "\n## 8. 키워드 단독보다 나빠진 질의(검증용)\n\n| 질의 | 유형 | 키워드 순위 | 하이브리드 순위 |\n|---|---|---|---|").unwrap();
-    for q in &hold {
+    for q in hold {
         if per[3][&q.qid].0 + 1e-9 < per[0][&q.qid].0 {
             let r = |p: &Per| p[&q.qid].2.map_or("-".into(), |x| x.to_string());
             writeln!(s, "| {} | {} | {} | {} |", q.qid, q.kind, r(&per[0]), r(&per[3])).unwrap();
@@ -780,6 +889,48 @@ mod tests {
         assert!(!accepts(0.5050, 12, 0.5, 10), "EPS 이내");
         assert!(!accepts(0.60, 9, 0.5, 10), "첫 페이지 적중이 줄면 안 받는다");
         assert!(accepts(0.60, 11, 0.5, 10));
+    }
+
+    fn q(qid: &str, kind: &str) -> Query {
+        Query { qid: qid.into(), text: "검색어".into(), kind: kind.into(), relevant: HashSet::from(["P1".to_string()]) }
+    }
+
+    /// 스펙 §6.1: 고르는 함수는 `Tune` 만 받는다 — `Tune` 은 tune_split 의 qid 만, `Hold` 와 겹치지 않고 둘을 합치면 전부.
+    #[test]
+    fn tune_and_hold_are_disjoint_and_tune_follows_tune_split() {
+        let qs: Vec<Query> = (0..20).map(|i| q(&format!("Q{i:03}"), if i % 3 == 0 { "date" } else { "kra" })).collect();
+        let (t, h) = split_queries(&qs);
+        let ids = tune_split(qs.iter().map(|x| (x.qid.as_str(), x.kind.as_str())));
+        let tset: HashSet<&str> = t.0.iter().map(|x| x.qid.as_str()).collect();
+        assert_eq!(tset, ids.iter().map(String::as_str).collect::<HashSet<&str>>());
+        assert!(h.0.iter().all(|x| !tset.contains(x.qid.as_str())), "검증용이 조정용에 섞이지 않는다");
+        assert_eq!(t.0.len() + h.0.len(), qs.len());
+    }
+
+    /// 나누는 쪽은 문턱 6·8·10(0 없음), 나누지 않는 쪽은 문턱·키워드형 가중치 축이 없다.
+    #[test]
+    fn split_arms_have_their_own_axes() {
+        let names = |b: bool| axes(b).into_iter().map(|(n, v)| (n, v.into_iter().map(|x| x.0).collect::<Vec<_>>())).collect::<Vec<_>>();
+        let split = names(true);
+        let k = split.iter().find(|(n, _)| *n == "keyword_max_chars").expect("문턱 축");
+        assert_eq!(k.1, vec!["6", "8", "10"]);
+        assert!(split.iter().any(|(n, _)| *n == "w_semantic[키워드형]"));
+        let zero = names(false);
+        assert!(zero.iter().all(|(n, _)| *n != "keyword_max_chars" && *n != "w_semantic[키워드형]"));
+        assert_eq!(zero.len() + 2, split.len());
+    }
+
+    /// params.json = 매개변수(평평하게) + card_tokens. card_tokens 가 없어도 읽히고, 제품처럼 HybridParams 로만 읽어도 된다.
+    #[test]
+    fn saved_params_carry_the_card_cap() {
+        let p = HybridParams { keyword_max_chars: 0, rrf_k: 30.0, ..HybridParams::default() };
+        let j = serde_json::to_string(&Saved { params: p.clone(), card_tokens: Some(128) }).unwrap();
+        let back: Saved = serde_json::from_str(&j).unwrap();
+        assert_eq!((back.params, back.card_tokens), (p.clone(), Some(128)));
+        let plain: HybridParams = serde_json::from_str(&j).unwrap();
+        assert_eq!(plain, p, "card_tokens 는 HybridParams 로 읽을 때 무시된다");
+        let old: Saved = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(old.card_tokens, None);
     }
 
     #[test]
