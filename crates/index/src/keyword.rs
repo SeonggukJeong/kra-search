@@ -19,6 +19,23 @@ const MAX_QUERY_WORDS: usize = 32;
 /// 색인 쓰기 메모리 — 저사양 PC 를 생각해 작게(tantivy 최소 15MB/스레드).
 const WRITER_BYTES: usize = 50_000_000;
 
+/// 키워드 필드 가중치(스펙 §8.2, DEC-038 초기값). M2 실험(m0eval)이 조정한다 — 검색할 때만 쓰므로 바꿔도 다시 색인할 필요 없다.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KeywordWeights {
+    pub title: f32,
+    pub filename: f32,
+    pub heading: f32,
+    pub body: f32,
+    /// bigram 구절 일치에 곱하는 배수
+    pub bigram: f32,
+}
+
+impl Default for KeywordWeights {
+    fn default() -> Self {
+        KeywordWeights { title: 3.0, filename: 2.5, heading: 2.0, body: 1.0, bigram: 0.5 }
+    }
+}
+
 /// 소제목·본문은 블록마다 값 하나. 한 값에 본문 전체(최대 500만 자)를 넣으면 토큰을 한꺼번에 만들어
 /// 1.2GB 까지 올라간다(리뷰 실측: 100만 자 295MB, 500만 자 1.21GB). 값으로 나누면 가장 큰 블록만큼만 쓴다.
 pub struct KeywordDoc {
@@ -91,8 +108,8 @@ impl KeywordDoc {
 
 struct Fields {
     doc_id: Field,
-    /// (형태소 필드, bigram 필드, 가중치) — 제목, 파일명, 소제목, 본문 순
-    pairs: [(Field, Field, f32); 4],
+    /// (형태소 필드, bigram 필드) — 제목, 파일명, 소제목, 본문 순. 가중치는 검색할 때 KeywordWeights 로 준다.
+    pairs: [(Field, Field); 4],
 }
 
 fn schema() -> (Schema, Fields) {
@@ -103,8 +120,8 @@ fn schema() -> (Schema, Fields) {
             TextFieldIndexing::default().set_tokenizer(tok).set_index_option(IndexRecordOption::WithFreqsAndPositions),
         )
     };
-    let mut pair = |name: &str, w: f32| (sb.add_text_field(&format!("{name}_m"), text(MORPH)), sb.add_text_field(&format!("{name}_b"), text(BIGRAM)), w);
-    let pairs = [pair("title", 3.0), pair("filename", 2.5), pair("heading", 2.0), pair("body", 1.0)];
+    let mut pair = |name: &str| (sb.add_text_field(&format!("{name}_m"), text(MORPH)), sb.add_text_field(&format!("{name}_b"), text(BIGRAM)));
+    let pairs = [pair("title"), pair("filename"), pair("heading"), pair("body")];
     (sb.build(), Fields { doc_id, pairs })
 }
 
@@ -161,7 +178,7 @@ impl KeywordIndex {
     }
 
     pub fn upsert(&mut self, d: &KeywordDoc) -> tantivy::Result<()> {
-        let [(tm, tb, _), (fm, fb, _), (hm, hb, _), (bm, bb, _)] = self.f.pairs;
+        let [(tm, tb), (fm, fb), (hm, hb), (bm, bb)] = self.f.pairs;
         let doc_id = self.f.doc_id;
         let mut doc = TantivyDocument::default();
         doc.add_u64(doc_id, d.id);
@@ -204,17 +221,18 @@ impl KeywordIndex {
         self.reader.searcher().num_docs()
     }
 
-    fn build_query(&self, query: &str) -> tantivy::Result<Option<Box<dyn Query>>> {
+    fn build_query(&self, query: &str, w: &KeywordWeights) -> tantivy::Result<Option<Box<dyn Query>>> {
         let query: String = query.chars().take(MAX_QUERY_CHARS).collect();
         let mut words: Vec<(Occur, Box<dyn Query>)> = Vec::new();
         for word in query.split_whitespace().take(MAX_QUERY_WORDS) {
             let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
-            for &(mf, bf, w) in &self.f.pairs {
+            let ws = [w.title, w.filename, w.heading, w.body];
+            for (&(mf, bf), &fw) in self.f.pairs.iter().zip(&ws) {
                 let mut morph = self.index.tokenizer_for_field(mf)?;
                 let mut ts = morph.token_stream(word);
                 while let Some(tok) = ts.next() {
                     let tq = TermQuery::new(Term::from_field_text(mf, &tok.text), IndexRecordOption::WithFreqs);
-                    clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(tq), w))));
+                    clauses.push((Occur::Should, Box::new(BoostQuery::new(Box::new(tq), fw))));
                 }
                 let mut bigram = self.index.tokenizer_for_field(bf)?;
                 let mut ts = bigram.token_stream(word);
@@ -227,7 +245,7 @@ impl KeywordIndex {
                     1 => Box::new(TermQuery::new(terms.pop().expect("1개").1, IndexRecordOption::WithFreqs)),
                     _ => Box::new(PhraseQuery::new_with_offset(terms)), // 2개 미만이면 패닉하므로 위에서 나눔
                 };
-                clauses.push((Occur::Should, Box::new(BoostQuery::new(bq, w * 0.5))));
+                clauses.push((Occur::Should, Box::new(BoostQuery::new(bq, fw * w.bigram))));
             }
             if !clauses.is_empty() {
                 words.push((Occur::Should, Box::new(BooleanQuery::new(clauses))));
@@ -237,9 +255,36 @@ impl KeywordIndex {
     }
 
     pub fn search(&self, query: &str, limit: usize) -> tantivy::Result<Vec<(u64, f32)>> {
-        let Some(q) = self.build_query(query)? else { return Ok(Vec::new()) };
+        self.search_with(query, limit, &KeywordWeights::default())
+    }
+
+    pub fn search_with(&self, query: &str, limit: usize, w: &KeywordWeights) -> tantivy::Result<Vec<(u64, f32)>> {
+        let Some(q) = self.build_query(query, w)? else { return Ok(Vec::new()) };
+        self.top_ids(&*q, limit)
+    }
+
+    /// 검색어 전체의 형태소가 순서대로 나오는 문서(제목·소제목·본문). 정확 구절 일치 가산용(스펙 §8.3). 형태소가 2개 미만이면 빈 목록.
+    pub fn phrase_ids(&self, query: &str, limit: usize) -> tantivy::Result<Vec<u64>> {
+        let query: String = query.chars().take(MAX_QUERY_CHARS).collect();
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        for &(mf, _) in [self.f.pairs[0], self.f.pairs[2], self.f.pairs[3]].iter() {
+            let mut tok = self.index.tokenizer_for_field(mf)?;
+            let mut ts = tok.token_stream(&query);
+            let mut terms: Vec<(usize, Term)> = Vec::new();
+            while let Some(t) = ts.next() {
+                terms.push((t.position, Term::from_field_text(mf, &t.text)));
+            }
+            if terms.len() < 2 {
+                return Ok(Vec::new());
+            }
+            clauses.push((Occur::Should, Box::new(PhraseQuery::new_with_offset(terms))));
+        }
+        Ok(self.top_ids(&BooleanQuery::new(clauses), limit)?.into_iter().map(|x| x.0).collect())
+    }
+
+    fn top_ids(&self, q: &dyn Query, limit: usize) -> tantivy::Result<Vec<(u64, f32)>> {
         let searcher = self.reader.searcher();
-        let hits = searcher.search(&q, &TopDocs::with_limit(limit.max(1)).order_by_score())?;
+        let hits = searcher.search(q, &TopDocs::with_limit(limit.max(1)).order_by_score())?;
         let mut out = Vec::with_capacity(hits.len());
         for (score, addr) in hits {
             let d: TantivyDocument = searcher.doc(addr)?;
@@ -277,6 +322,35 @@ mod tests {
         }
         kw.commit().unwrap();
         kw
+    }
+
+    fn ids_w(kw: &KeywordIndex, q: &str, w: &KeywordWeights) -> Vec<u64> {
+        kw.search_with(q, 10, w).unwrap().into_iter().map(|x| x.0).collect()
+    }
+
+    #[test]
+    fn weights_change_field_priority() {
+        let kw = index_of(&[
+            (1, d(None, &[], &["이 문서는 내부통제 관련 회의 결과를 정리했다."]), "회의록.hwp"),
+            (2, d(Some("내부통제규정 개정안"), &[], &["개정 이유"]), "개정안.hwp"),
+        ]);
+        assert_eq!(ids_w(&kw, "내부통제", &KeywordWeights::default()), ids(&kw, "내부통제"), "기본값 = 기존 search");
+        assert_eq!(ids(&kw, "내부통제"), vec![2, 1]);
+        let body_first = KeywordWeights { title: 0.1, filename: 0.1, heading: 0.1, body: 5.0, bigram: 0.5 };
+        assert_eq!(ids_w(&kw, "내부통제", &body_first), vec![1, 2]);
+    }
+
+    #[test]
+    fn phrase_ids_need_morphemes_in_order() {
+        let kw = index_of(&[
+            (1, d(None, &[], &["내부통제 규정을 개정했다"]), "a.hwp"),
+            (2, d(None, &[], &["규정과 내부통제를 따로 본다"]), "b.hwp"),
+            (3, d(None, &["내부통제 규정"], &["본문"]), "c.hwp"),
+        ]);
+        let mut got = kw.phrase_ids("내부통제 규정", 10).unwrap();
+        got.sort();
+        assert_eq!(got, vec![1, 3]);
+        assert!(kw.phrase_ids("규정", 10).unwrap().is_empty(), "형태소 하나는 구절이 아니다");
     }
 
     #[test]

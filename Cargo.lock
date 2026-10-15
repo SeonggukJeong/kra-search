@@ -1612,6 +1612,7 @@ dependencies = [
  "doc",
  "lindera",
  "rusqlite",
+ "serde",
  "serde_json",
  "tantivy",
  "tempfile",
