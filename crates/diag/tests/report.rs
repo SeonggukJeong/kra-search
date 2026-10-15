@@ -126,3 +126,33 @@ fn falls_back_when_working_dir_is_not_writable() {
     let exe_dir = std::path::Path::new(env!("CARGO_BIN_EXE_kra-diag")).parent().unwrap().to_path_buf();
     assert!(exe_dir.join("kra-diag-report.json").exists(), "report should fall back to the exe folder");
 }
+
+#[test]
+fn per_format_stats_and_no_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("kra diag 형식 홍길동");
+    std::fs::create_dir_all(&dir).unwrap();
+    let fx = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../extract/tests/fixtures");
+    std::fs::copy(fx.join("office/sample.docx"), dir.join("홍길동_인사.docx")).unwrap();
+    std::fs::copy(fx.join("office/cp949.csv"), dir.join("명단.csv")).unwrap();
+    std::fs::copy(fx.join("schedule.hwp"), dir.join("일정.hwp")).unwrap();
+    std::fs::write(dir.join("~$임시.docx"), b"x").unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_kra-diag")).args(["extract-stats", "--root"]).arg(&dir).current_dir(out.path()).status().unwrap();
+    assert!(st.success());
+    let txt = std::fs::read_to_string(out.path().join("kra-diag-summary.txt")).unwrap();
+    let json = std::fs::read_to_string(out.path().join("kra-diag-report.json")).unwrap();
+    assert!(txt.contains("docx 1/1") && txt.contains("csv 1/1") && txt.contains("hwp 1/1"), "{txt}");
+    assert!(txt.contains("읽기 오류 0 · 100MB 초과 0 · 내용이 너무 많음 0 · 500만 자에서 자름 0"), "{txt}");
+    // 새 집계 항목(숫자만): 비정상 종료(형식별), 내부 상한, 잘린 문서
+    for key in ["\"crashed\"", "\"too_complex\"", "\"truncated\"", "\"chunk_tokens\"", "\"est_chunks_all\"", "\"mtime_age\"", "\"mtime_top_day_share\""] {
+        assert!(json.contains(key), "{key} 없음");
+    }
+    // 수정일은 구간별 개수와 비율만 — 날짜 값은 남기지 않는다(보고서 생성 시각 줄만 날짜를 가진다).
+    assert!(txt.contains("파일 수정일(찾은 파일 3개): 30일 이내 100.0%"), "{txt}");
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(v["extract"]["mtime_age"].as_array().unwrap().iter().all(|b| b[0].is_string() && b[1].is_u64()));
+    for needle in ["홍길동", "인사", "명단", "일정", "kra diag"] {
+        assert!(!json.contains(needle) && !txt.contains(needle), "leaked {needle:?}");
+    }
+}

@@ -1,6 +1,6 @@
 //! 평면(flat) 벡터 저장소: int8 정밀 스캔 + 이진 후보 선별 후 재계산.
 
-use embed::vector::{asym_score, dot_i8, hamming, quantize_i8, sign_bits, truncate_normalize};
+use crate::{asym_score, dot_i8, hamming, quantize_i8, sign_bits, truncate_normalize};
 
 pub struct FlatIndex {
     dim: usize,

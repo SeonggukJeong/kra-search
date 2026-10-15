@@ -20,6 +20,11 @@
 | [INC-013](#inc-013) | 백엔드 개수 검사가 지연 로드 환경의 시험을 깨뜨림 | embed | backend_dir 있을 때만 검사 |
 | [INC-014](#inc-014) | 평가 캐시가 추출 결과 변경을 무시(낡은 임베딩 재사용) | 평가 | `m0eval/src/cache.rs` 입력 해시 키 |
 | [INC-015](#inc-015) | CI가 메모리 회귀 시험을 돌리지 않음 | CI | ci.yml 실모델 단계에 `diag --test memory` |
+| [INC-016](#inc-016) | Windows CI 에서 `fetch-pdfium.sh` 의 curl 이 쓰기 실패(23) | CI·빌드 | 스크립트의 `native_path` + 주석, Windows CI |
+| [INC-017](#inc-017) | 큰 문서·상주 워커가 색인 메모리를 키움(90MB TXT 앱 743MB, 워커 누적 490MB) | extract·app | `extract/tests/formats.rs`·`app/tests/pipeline.rs` 큰 TXT 시험, `extract/tests/worker.rs` 재활용 시험, app 의 컴파일 때 상한 일치 확인 |
+| [INC-018](#inc-018) | pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" | app | `app/tests/cli.rs` `pdf_is_skipped_without_pdfium_and_read_later` |
+| [INC-019](#inc-019) | 실패 분류 섞임: 내부 상한이 "100MB 넘는 파일", 진단의 비정상 종료가 시간 초과로 | extract·app·diag | `FailKind::TooComplex` + 코드 고정 시험, `app` 안내 시험, `diag` 집계 시험 |
+| [INC-020](#inc-020) | m1-diag-1 이 M2 에 필요한 수치를 못 냄(청크 400 기준·전체 추정 없음) | diag | `embed::chunk::BODY_CHUNK` 공유 상수, 요약 시험, 릴리즈 전 "다음 마일스톤 수치" 점검(런북 1단계) |
 
 ---
 
@@ -143,3 +148,42 @@ CI 가 메모리 회귀 시험을 돌리지 않음 · 2026-10-13
 - **증상**: INC-004 의 메모리 시험(`diag/tests/memory.rs`)이 `#[ignore]`(모델 필요)인데 CI 실모델 단계는 `embed` 시험만 돌림 → 패치가 빠져도 CI 가 통과했을 것.
 - **고친 방법**: CI 실모델 단계에 `cargo test -p diag --release --test memory -- --include-ignored`. 모델 없이 도는 `llama-sys/tests/patches.rs` 도 추가.
 - **교훈**: `#[ignore]` 시험을 만들면 **어디서 돌리는지**를 같이 정한다.
+
+### INC-016
+Windows CI 에서 pdfium 내려받기 실패 · 2026-10-14
+- **증상**: `bash tools/fetch-pdfium.sh` 가 `curl: (23) client returned ERROR on write` 로 종료 → Windows 잡이 `cargo build` 전에 중단(macOS 는 통과).
+- **원인**: 스크립트가 `MSYS_NO_PATHCONV=1` 로 경로 변환을 껐는데 `curl -o` 에 MSYS 경로(`/d/a/...`)를 그대로 줘서, 네이티브 `curl.exe` 가 현재 드라이브의 `\d\a\...`(없는 폴더)에 쓰려다 실패.
+- **고친 방법**: curl 에 넘기는 경로만 `cygpath -m`(`native_path`)으로 변환. tar·mv·rm 은 MSYS 프로그램이라 그대로(tar 는 `D:/` 를 원격 호스트로 읽어 변환하면 오히려 깨짐). `fetch-rhwp.sh` 는 git·python 에 `cygpath -m` 경로를 이미 쓰고 있어 CI 에서 동작 — 그대로 둠.
+- **교훈**: 경로 변환을 끄면 네이티브 Windows 프로그램(curl·git·python)에 넘기는 경로를 직접 바꿔야 한다. Windows 전용 경로 문제는 macOS 에서 안 보이므로 새 스크립트는 Windows CI 에서 처음 돌려 본다.
+
+### INC-017
+큰 문서·상주 워커가 색인 메모리를 키움 · 2026-10-15 (M1 최종 리뷰)
+- **증상**: 90MB 한국어 TXT 하나를 색인하면 앱 약 743MB·워커 약 580MB, meta.db 가 97MB 늘었다. 공개 세트 1,000개 색인에서는 상주 워커가 60~490MB 를 오갔고, results.md 는 508MB 최대값을 "색인 쓰기 버퍼·meta 쓰기·사전·워커 응답"으로 잘못 설명했다.
+- **원인**: (1) 500만 자 상한(DEC-041)이 앱에서 `KeywordDoc` 을 만들 때만 걸려, 워커는 문서 전체를 JSON 한 줄로 보내고 앱은 그것을 통째로 받아 meta.db 에 저장했다. (2) 상주 워커가 큰 입력 파일(그림 많은 10~48MB HWPX)마다 파일 크기의 약 3배씩 늘고 돌려주지 않았다 — 응답은 수 KB 라 응답 크기와 무관.
+- **고친 방법**: `extract::MAX_DOC_CHARS`(500만 자, `BODY_MAX_CHARS` 와 같은 값)로 `extract_bytes` 가 모든 형식의 글자를 자르고 `Stats.truncated` 를 켠다. TXT·CSV 는 디코딩 전에 2,000만 바이트로 자르고 PDF 는 상한을 채우면 남은 쪽을 읽지 않는다(DEC-036 (5)). 워커는 읽은 크기 합 64MB·1,000개·응답 16MB 를 넘으면 새 프로세스로 바꾼다(DEC-033 (2)). 결과: 90MB TXT 앱 196MB·워커 190MB·meta.db 12MB, 공개 세트 워커 약 180~240MB(KI-037 남은 부분).
+- **재발 방지 장치**: `extract/tests/formats.rs` `huge_txt_is_capped_and_marked_truncated`(30MB 한글·15MB 영문), `app/tests/pipeline.rs` `huge_txt_is_stored_capped`(meta 의 문서 JSON 크기), `extract/tests/worker.rs` 재활용 시험 3개, `app/src/lib.rs` 의 `const _: () = assert!(MAX_DOC_CHARS == BODY_MAX_CHARS)`.
+- **교훈**: 상한은 데이터가 프로세스 경계를 넘기 **전**에 건다. 메모리 최대값은 앱과 자식 프로세스를 따로 재고(`time -l` 은 섞임), 원인을 쪼개 확인하기 전에는 결과 문서에 원인을 쓰지 않는다.
+
+### INC-018
+pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" · 2026-10-15 (M1 최종 리뷰)
+- **증상**: 실행 파일 옆 `pdfium.dll` 이 없거나 불러오지 못하면 모든 PDF 가 `Unsupported` 로 기록되어 "열 수 없는 파일 — 파일 이름으로만 찾을 수 있음"이 되고, DLL 을 되돌려 놓아도 파일이 바뀔 때까지 다시 읽지 않았다(`Unsupported` 는 재시도 대상이 아님).
+- **원인**: 계획 결함 — 워커는 pdfium 불러오기 실패를 무시하고 PDF 를 `Unsupported` 로 돌려주며, 앱은 이것을 다른 실패와 똑같이 meta 에 기록했다.
+- **고친 방법**: `index` 시작 때 앱이 같은 절대 경로로 `extract::pdf::init` 을 불러 보고, 실패하면 PDF 는 meta 에 기록하지 않고 건너뛴다(재시도 후보도). stderr 한 줄 안내, 요약에 "PDF 건너뜀 N개(다음에 다시)"(DEC-035 추가분).
+- **재발 방지 장치**: `app/tests/cli.rs` `pdf_is_skipped_without_pdfium_and_read_later` — 없는 경로로 색인하면 PDF 가 기록되지 않고, 올바른 경로로 다시 색인하면 읽힌다.
+- **교훈**: 환경 문제(부품 없음)로 생긴 실패를 문서 탓 실패와 같은 칸에 영구 기록하지 않는다 — 환경이 돌아오면 저절로 다시 처리되게 한다.
+
+### INC-019
+실패 분류 섞임 · 2026-10-15 (M1 최종 리뷰)
+- **증상**: 3MB ODS 도 내부 상한(ODS 200만 칸·XML 파트 64MB 등)을 넘으면 "100MB 넘는 파일"로 안내됐고, 진단 보고서의 형식별 `timeout` 에 비정상 종료가 섞였다.
+- **원인**: `FailKind::TooLarge` 하나를 100MB 파일 상한과 내부 상한에 같이 썼다. 진단은 `Outcome::Crashed` 를 형식별 `timeout` 에 더했다.
+- **고친 방법**: `FailKind::TooComplex`(코드 "TooComplex", 화면 "내용이 너무 많은 문서") 추가 — `TooLarge` 는 `MAX_FILE_BYTES` 에만. 진단은 `too_complex`·`truncated`(전체)와 `crashed`(형식별)를 따로 세고 요약에도 따로 보인다(DEC-036 (6)).
+- **재발 방지 장치**: `extract/tests/formats.rs` `fail_kind_codes_are_stable`, `extract` 의 sheet·xmlutil 단위 시험(내부 상한 → TooComplex), `app/src/search.rs` `too_complex_is_not_shown_as_too_large`, `diag/src/extract_stats.rs` `crash_timeout_too_complex_and_truncated_are_counted_apart`, `diag/src/report.rs` 요약 시험, `diag/tests/report.rs` 새 항목 확인.
+- **교훈**: 사용자에게 보이는 실패 안내와 진단 집계는 원인이 다르면 칸도 다르게 둔다 — 하나로 묶으면 안내가 틀리고 현장 숫자를 해석할 수 없다.
+
+### INC-020
+진단 릴리즈가 다음 마일스톤에 쓸 수치를 못 냄 · 2026-10-15 (m1-diag-1 태그 직후, 폐쇄망 반입 전)
+- **증상**: m1-diag-1 의 본문 청크 통계와 임베딩 속도 벤치가 400토큰 청크 기준이었다 — M0 가 정한 크기는 300(docs/m0/results.md). 보고서에 문서당 청크 중앙값·p90 만 있어 실제 PC 의 본문 전체 임베딩 시간을 계산할 수 없었고, 성능·효율 코어 수(KI-017 의 약속)와 날짜 가산(M2)의 근거인 수정일 분포도 없었다. 사용자가 "M2 로 넘어가는 데 무리 없나" 물어서 발견.
+- **원인**: M0 에서 청크 크기를 정한 뒤 진단의 청크 설정(DEC-003, 값을 코드에 직접 씀)을 갱신하지 않았다. 진단 항목을 "지금 마일스톤이 재고 싶은 것"으로만 정했고, 다음 마일스톤이 이 결과로 정할 것과 대조하지 않았다.
+- **고친 방법**: 앱과 진단이 같은 `embed::chunk::BODY_CHUNK` 를 쓴다. 형식별 청크·청크 입력 토큰 합과 찾은 파일 전체 추정, 실측 카드 길이와 본문 전체의 모델별 환산 시간, 성능·효율 코어 수와 그 1·2배 스레드, 수정일 경과 구간과 가장 많이 몰린 하루의 비율을 더해 m1-diag-2 로 다시 냈다(DEC-045). m1-diag-1 은 지우지 않고 대체 표시(DEC-019).
+- **재발 방지 장치**: 공유 상수 `BODY_CHUNK`(크기를 바꾸면 진단도 같이 바뀜), `diag/src/report.rs` `summary_shows_m2_estimates`·`cpu_line_shows_hybrid_split_only_when_hybrid`, `diag/src/extract_stats.rs` `chunk_totals_accumulate_per_format`·`estimate_scales_each_format_by_found_over_processed`·`mtime_buckets_and_top_day_share`, `diag/tests/report.rs` 새 항목 확인. 런북 `release-diag.md` 1단계에 "다음 마일스톤이 이 결과로 정할 것과 보고서 항목 대조"를 추가.
+- **교훈**: 폐쇄망 측정은 한 번 가져가는 데 사용자의 하루가 든다 — 태그 전에 다음 마일스톤 계획이 이 보고서에서 읽을 숫자를 목록으로 만들어 대조한다. 결정한 설정값은 진단에 복사하지 말고 공유 상수로 가리킨다.

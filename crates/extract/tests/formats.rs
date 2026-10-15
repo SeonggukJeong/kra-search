@@ -1,0 +1,420 @@
+//! 형식 판별·실패 분류 시험. 형식별 내용 시험은 각 형식 Task 에서 이 파일에 덧붙인다.
+
+use extract::cli::extract_one;
+use extract::runner::Outcome;
+use extract::FailKind;
+use std::path::{Path, PathBuf};
+
+fn fx(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+}
+
+/// 임시 폴더에 이름·내용을 정해 파일을 만든다.
+fn temp_file(name: &str, bytes: &[u8]) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join(name);
+    std::fs::write(&p, bytes).unwrap();
+    (dir, p)
+}
+
+fn fail_kind(o: &Outcome) -> Option<FailKind> {
+    match o {
+        Outcome::Failed { kind, .. } => Some(kind.clone()),
+        _ => None,
+    }
+}
+
+#[test]
+fn format_from_extension_is_case_insensitive() {
+    use extract::format::Format;
+    assert_eq!(Format::from_path(Path::new("a/보고서.HWPX")), Some(Format::Hwpx));
+    assert_eq!(Format::from_path(Path::new("x.Pdf")), Some(Format::Pdf));
+    assert_eq!(Format::from_path(Path::new("x.doc")), None);
+    assert_eq!(Format::from_path(Path::new("확장자없음")), None);
+    for f in Format::ALL {
+        assert_eq!(Format::from_path(Path::new(&format!("a.{}", f.ext()))), Some(f));
+    }
+}
+
+#[test]
+fn extension_mismatch_and_empty_are_classified() {
+    let (_d, empty) = temp_file("빈.hwp", b"");
+    assert_eq!(fail_kind(&extract_one(&empty)), Some(FailKind::NotContainer));
+    let (_d, unknown) = temp_file("메모.doc", b"anything");
+    assert_eq!(fail_kind(&extract_one(&unknown)), Some(FailKind::Unsupported));
+    // 어떤 확장자든 DRM 헤더면 DRM
+    let (_d, drm) = temp_file("보안.pdf", b"\x9b DRMONE  rest of file");
+    assert_eq!(fail_kind(&extract_one(&drm)), Some(FailKind::Drm));
+}
+
+#[test]
+fn oversized_file_is_too_large_without_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("큰파일.hwp");
+    let f = std::fs::File::create(&p).unwrap();
+    f.set_len(extract::format::MAX_FILE_BYTES + 1).unwrap(); // 희소 파일 — 디스크를 쓰지 않는다
+    assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::TooLarge));
+}
+
+#[test]
+fn fail_kind_codes_are_stable() {
+    // meta.db 에 저장되는 값 — 바꾸면 기존 색인의 실패 표시가 기본 문구로 떨어진다.
+    let all = [
+        (FailKind::Encrypted, "Encrypted"),
+        (FailKind::Drm, "Drm"),
+        (FailKind::Corrupt, "Corrupt"),
+        (FailKind::NotContainer, "NotContainer"),
+        (FailKind::Unsupported, "Unsupported"),
+        (FailKind::TooLarge, "TooLarge"),
+        (FailKind::TooComplex, "TooComplex"),
+        (FailKind::NoText, "NoText"),
+        (FailKind::Unreadable, "Unreadable"),
+    ];
+    for (k, code) in all {
+        assert_eq!(k.code(), code);
+    }
+}
+
+#[test]
+fn missing_file_is_unreadable() {
+    assert_eq!(fail_kind(&extract_one(Path::new("/없는/경로/문서.hwp"))), Some(FailKind::Unreadable));
+}
+
+#[test]
+fn hwpml_saved_as_hwp_is_extracted() {
+    // KI-010: HWPML(XML) 문서를 .hwp 로 저장한 경우 — 예전에는 "HWP 아님"으로 분류됐다.
+    let bytes = std::fs::read(fx("formatting_table.hml")).unwrap();
+    let (_d, p) = temp_file("xml문서.hwp", &bytes);
+    match extract_one(&p) {
+        Outcome::Ok { doc, .. } => assert!(!doc.blocks.is_empty()),
+        other => panic!("{other:?}"),
+    }
+}
+
+fn office(name: &str) -> PathBuf {
+    fx(&format!("office/{name}"))
+}
+
+/// 성공 결과의 (제목, [(블록 종류, 글자)]).
+fn blocks(o: Outcome) -> (Option<String>, Vec<(doc::BlockKind, String)>) {
+    match o {
+        Outcome::Ok { doc, .. } => (doc.title, doc.blocks.into_iter().map(|b| (b.kind, b.text)).collect()),
+        other => panic!("추출 실패: {other:?}"),
+    }
+}
+
+fn kt(k: doc::BlockKind, t: &str) -> (doc::BlockKind, String) {
+    (k, t.to_string())
+}
+
+#[test]
+fn docx_headings_tables_textbox_once() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.docx")));
+    assert_eq!(title.as_deref(), Some("2026 운영 계획 & 예산"));
+    assert_eq!(b, vec![
+        kt(Heading, "사업 개요"),
+        kt(Paragraph, "본 문서는 렛츠런파크 운영 계획이다."),
+        kt(Paragraph, "항목 A&B <중요> 가나다\n둘째 줄"),
+        kt(Heading, "세부 추진 계획"),
+        kt(Heading, "개요 수준만 지정된 제목"),
+        kt(Paragraph, "남은 글 옮긴 글"),
+        kt(TableHeader, "구분 | 예산(백만원) | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 예산(백만원): 1,200 | 비고: 전년 대비 5% 증가"),
+        kt(TableRow, "구분: 시설 개선 | 예산(백만원): 300"),
+        kt(Paragraph, "글상자 안 문장"),
+        kt(Paragraph, "글상자 앞"),
+        kt(Paragraph, "맺음말"),
+    ]);
+}
+
+#[test]
+fn pptx_follows_presentation_order() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.pptx")));
+    assert_eq!(title.as_deref(), Some("더비 발표"));
+    assert_eq!(b, vec![
+        kt(Heading, "더비 운영 계획"),
+        kt(Paragraph, "2026년 3월"),
+        kt(Heading, "추진 일정"),
+        kt(Paragraph, "1단계: 준비\n2단계: 시행"),
+        kt(Paragraph, "세부 항목 & 비고"),
+        kt(TableHeader, "지역 | 입장객"),
+        kt(TableRow, "지역: 서울 | 입장객: 12,000"),
+        kt(Heading, "마지막 슬라이드"),
+        kt(Paragraph, "감사합니다"),
+    ]);
+}
+
+#[test]
+fn pptx_default_title_falls_back_to_first_slide_title() {
+    // 한국어 PowerPoint 기본 제목 "PowerPoint 프레젠테이션" 은 제목 필드(가중치 3.0)에 넣지 않는다.
+    let (title, _) = blocks(extract_one(&office("placeholder_title.pptx")));
+    assert_eq!(title.as_deref(), Some("2026 고객 만족 개선 방안"));
+}
+
+#[test]
+fn docx_without_core_uses_first_heading_as_title() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("no_core.docx")));
+    assert_eq!(title.as_deref(), Some("인사 규정 개정 검토"));
+    assert_eq!(b, vec![
+        kt(Paragraph, "보고서 본문 앞 문단"),
+        kt(Heading, "인사 규정 개정 검토"),
+        kt(Paragraph, "검토 결과를 보고한다."),
+    ]);
+}
+
+#[test]
+fn not_a_zip_with_office_extension_is_not_container() {
+    let (_d, p) = temp_file("가짜.docx", "그냥 글자".as_bytes());
+    assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::NotContainer));
+}
+
+#[test]
+fn password_protected_office_is_encrypted() {
+    // 암호를 건 DOCX/XLSX/PPTX 는 ZIP 이 아니라 OLE(복합 파일) 안에 EncryptedPackage 로 들어 있다.
+    let mut ole = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    ole.extend_from_slice(&[0u8; 504]);
+    let (_d, p) = temp_file("암호.xlsx", &ole);
+    assert_eq!(fail_kind(&extract_one(&p)), Some(FailKind::Encrypted));
+}
+
+#[test]
+fn odt_headings_spaces_footnote_table() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.odt")));
+    assert_eq!(title.as_deref(), Some("규정 개정안"));
+    assert_eq!(b, vec![
+        kt(Heading, "제1장 총칙"),
+        kt(Paragraph, "목적 및 범위 탭 뒤\n다음 줄"),
+        kt(Paragraph, "각주가 있는 문장 각주 본문 이어지는 글"),
+        kt(Paragraph, "목록 항목 & 하나"),
+        kt(TableHeader, "구분 | 수량 | 비고"),
+        kt(TableRow, "구분: 말 | 수량: 12"),
+        kt(TableRow, "구분: 합쳐진 칸 | 비고: 끝"),
+        kt(Paragraph, "맺음"),
+    ]);
+}
+
+#[test]
+fn odp_titles_are_headings_and_notes_are_skipped() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.odp")));
+    assert_eq!(title.as_deref(), Some("발표 자료"));
+    assert_eq!(b, vec![
+        kt(Heading, "발표 제목"),
+        kt(Paragraph, "부제목"),
+        kt(Heading, "둘째 장"),
+        kt(Paragraph, "요점 하나"),
+        kt(Paragraph, "요점 둘"),
+    ]);
+}
+
+#[test]
+fn odt_without_title_uses_first_heading() {
+    let (title, _) = blocks(extract_one(&office("untitled.odt")));
+    assert_eq!(title.as_deref(), Some("제1장 총칙"));
+}
+
+#[test]
+fn encrypted_odt_is_encrypted_not_corrupt() {
+    // 암호 ODF 는 ZIP 이고 content.xml 이 암호문 — manifest 의 encryption-data 로 알아본다.
+    assert_eq!(fail_kind(&extract_one(&office("encrypted.odt"))), Some(FailKind::Encrypted));
+}
+
+#[test]
+fn xlsx_sheets_dates_bools_formulas() {
+    use doc::BlockKind::*;
+    let (title, b) = blocks(extract_one(&office("sample.xlsx")));
+    assert_eq!(title.as_deref(), Some("예산 집계"));
+    assert_eq!(b, vec![
+        kt(Heading, "예산"),
+        kt(TableHeader, "구분 | 금액 | 일자 | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 금액: 1200 | 일자: 2026-03-01 | 비고: 인라인 문자열"),
+        kt(TableRow, "구분: 시설 개선 | 금액: 300.25 | 비고: TRUE"),
+        kt(TableRow, "금액: 1500.25"),
+    ]);
+}
+
+#[test]
+fn huge_repeated_rows_are_cheap() {
+    use doc::BlockKind::*;
+    // sample.ods 끝에는 1,048,573행 × 1,024칸 반복 빈 행이 있다(LibreOffice 파일에 흔함).
+    let t = std::time::Instant::now();
+    let (title, b) = blocks(extract_one(&office("sample.ods")));
+    assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    assert_eq!(title.as_deref(), Some("예산표"));
+    assert_eq!(b, vec![
+        kt(Heading, "예산"),
+        kt(TableHeader, "구분 | 금액 | 일자"),
+        kt(TableRow, "구분: 경마 | 금액: 1200 | 일자: 2026-03-01"),
+        kt(TableRow, "구분: 시설 | 금액: 0.5"),
+    ]);
+}
+
+#[test]
+fn txt_encodings_are_detected() {
+    let ko = "한국마사회 경마 시행 계획\n렛츠런파크 서울 운영 방안을 보고합니다.";
+    for f in ["utf8.txt", "utf8_bom.txt", "cp949.txt", "utf16le_bom.txt", "utf16be_bom.txt", "utf16le_nobom.txt"] {
+        let (_, b) = blocks(extract_one(&office(f)));
+        assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, ko)], "{f}");
+    }
+    assert_eq!(blocks(extract_one(&office("cp949_short.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "회의록")]);
+    assert_eq!(blocks(extract_one(&office("cp949_ext.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "똠방각하 펲뷁 샾")]);
+    assert_eq!(blocks(extract_one(&office("ascii.txt"))).1, vec![kt(doc::BlockKind::Paragraph, "plain ascii only")]);
+}
+
+#[test]
+fn csv_quotes_and_multiline_cells() {
+    use doc::BlockKind::*;
+    let (_, b) = blocks(extract_one(&office("cp949.csv")));
+    assert_eq!(b, vec![
+        kt(TableHeader, "구분 | 금액 | 비고"),
+        kt(TableRow, "구분: 경마 시행 | 금액: 1,200 | 비고: 따옴표 \"안\" 글"),
+        kt(TableRow, "구분: 시설 개선 | 금액: 300"),
+        kt(TableRow, "구분: 여러 줄 칸 | 금액: 5 | 비고: 끝"),
+    ]);
+}
+
+#[test]
+fn stray_nul_does_not_turn_utf8_into_utf16() {
+    // 짝수 길이 UTF-8 한글 + NUL 하나 — "NUL 이 있으면 UTF-16" 규칙이면 깨진 한자로 풀린다(리뷰에서 재현).
+    let mut bytes = "한국마사회 경마 시행 계획 보고".as_bytes().to_vec();
+    bytes.push(0);
+    assert_eq!(bytes.len() % 2, 0);
+    let (_d, p) = temp_file("nul.txt", &bytes);
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b.len(), 1, "{b:?}");
+    assert!(b[0].1.contains("한국마사회 경마 시행 계획 보고"), "{b:?}");
+}
+
+fn ok_doc(o: Outcome) -> (doc::Document, extract::Stats) {
+    match o {
+        Outcome::Ok { doc, stats, .. } => (doc, stats),
+        o => panic!("{o:?}"),
+    }
+}
+
+fn doc_chars(d: &doc::Document) -> usize {
+    d.blocks.iter().map(|b| b.text.chars().count()).sum()
+}
+
+/// 아주 큰 TXT: 워커 밖으로 내보내는 글자는 MAX_DOC_CHARS 이하, 잘림 표시가 켜진다(I1 — 90MB TXT 가 앱 743MB·meta 97MB).
+/// ① 약 30MB 한글(디코딩 전 바이트 상한을 넘음) ② 15MB 영문(바이트 상한 안이지만 글자 1,500만 개 — 공통 글자 상한이 자른다).
+#[test]
+fn huge_txt_is_capped_and_marked_truncated() {
+    let ko = "한국마사회 경마 시행 계획 보고 문서 본문 줄입니다\n".repeat(30 * 1024 * 1024 / 75);
+    let en = "plain ascii log line number\n".repeat(15 * 1024 * 1024 / 28);
+    for (name, body) in [("큰한글.txt", ko), ("큰로그.txt", en)] {
+        let (_d, p) = temp_file(name, body.as_bytes());
+        drop(body);
+        let (d, stats) = ok_doc(extract_one(&p));
+        let n = doc_chars(&d);
+        assert!(n <= extract::MAX_DOC_CHARS && n > extract::MAX_DOC_CHARS - 100, "{name}: {n}");
+        assert!(stats.truncated, "{name}");
+    }
+    let (_d, p) = temp_file("작은.txt", "짧은 문서".as_bytes());
+    assert!(!ok_doc(extract_one(&p)).1.truncated);
+}
+
+#[test]
+fn blank_lines_split_txt_paragraphs() {
+    let (_d, p) = temp_file("메모.txt", "첫 문단 첫 줄\n첫 문단 둘째 줄\n\n\n둘째 문단".as_bytes());
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, "첫 문단 첫 줄\n첫 문단 둘째 줄"), kt(doc::BlockKind::Paragraph, "둘째 문단")]);
+}
+
+#[test]
+fn bomless_utf16le_korean_prose_with_u_xx00_syllables() {
+    // 가(AC00)·대(B300)·글(AE00) 은 UTF-16LE 낮은 바이트가 0 이라 "짝수 자리" 쪽에도 NUL 이 생긴다(실제 한국어 문장 2~3%).
+    let text = "가을 대회 글짓기 안내문을 보내드립니다 경마 시행 계획과 렛츠런파크 운영 방안을 함께 보고합니다 ";
+    let text = text.repeat(6);
+    let bytes: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let units = bytes.len() / 2;
+    let zeros_even = bytes.iter().step_by(2).filter(|&&b| b == 0).count();
+    let zeros_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+    assert!(zeros_even * 50 > units && zeros_even * 10 < units, "minor {zeros_even}/{units} 가 2%~10% 구간이어야 한다");
+    assert!(zeros_odd * 10 >= units, "major {zeros_odd}/{units}");
+    let (_d, p) = temp_file("utf16.txt", &bytes);
+    let (_, b) = blocks(extract_one(&p));
+    assert_eq!(b, vec![kt(doc::BlockKind::Paragraph, text.trim())]);
+}
+
+/// 이 호스트의 pdfium(tools/fetch-pdfium.sh 가 받은 것)을 한 번 불러온다.
+fn pdfium() {
+    let plat = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => "mac-arm64/lib",
+        ("macos", "x86_64") => "mac-x64/lib",
+        ("windows", "x86_64") => "win-x64/bin",
+        ("linux", "x86_64") => "linux-x64/lib",
+        other => panic!("pdfium 플랫폼 없음: {other:?}"),
+    };
+    let lib = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/pdfium").join(plat).join(extract::pdf::LIB_NAME);
+    assert!(lib.exists(), "먼저 `bash tools/fetch-pdfium.sh` 실행: {}", lib.display());
+    // canonicalize 는 Windows 에서 `\\?\C:\…` 꼴을 돌려준다 — absolute 는 그 접두어 없이 절대 경로만 만든다.
+    extract::pdf::init(&std::path::absolute(&lib).unwrap()).unwrap();
+}
+
+fn pdf_fx(name: &str) -> PathBuf {
+    fx(&format!("pdf/{name}"))
+}
+
+#[test]
+fn pdf_korean_pages_and_title() {
+    pdfium();
+    match extract_one(&pdf_fx("korean.pdf")) {
+        Outcome::Ok { doc, stats, .. } => {
+            assert_eq!(doc.title.as_deref(), Some("마사회 검색 시험"));
+            assert_eq!((stats.pdf_pages, stats.pdf_bad_pages), (2, 0));
+            assert_eq!(doc.blocks.len(), 2);
+            assert!(doc.blocks[0].text.contains("렛츠런파크 서울 운영 방안"), "{:?}", doc.blocks);
+            assert!(doc.blocks[1].text.contains("1,234백만원"), "{:?}", doc.blocks);
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn pdf_garbled_and_image_only_are_no_text() {
+    pdfium();
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("garbled.pdf"))), Some(FailKind::NoText));
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("image_only.pdf"))), Some(FailKind::NoText));
+}
+
+#[test]
+fn pdf_bad_pages_are_dropped_and_counted() {
+    pdfium();
+    match extract_one(&pdf_fx("mixed.pdf")) {
+        Outcome::Ok { doc, stats, .. } => {
+            assert_eq!((stats.pdf_pages, stats.pdf_bad_pages), (2, 1));
+            assert_eq!(doc.blocks.len(), 1);
+            assert!(!doc.blocks[0].text.contains('Ä'));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn pdf_password_is_encrypted() {
+    pdfium();
+    assert_eq!(fail_kind(&extract_one(&pdf_fx("encrypted.pdf"))), Some(FailKind::Encrypted));
+}
+
+#[test]
+fn pdf_init_is_safe_from_many_threads() {
+    // 시험들이 병렬로 처음 init 을 부르면 pdfium-render 가 "이미 바인딩됨" 오류를 낼 수 있었다(리뷰 지적) → 직렬화 확인.
+    let hs: Vec<_> = (0..8).map(|_| std::thread::spawn(pdfium)).collect();
+    for h in hs {
+        h.join().unwrap();
+    }
+}
+
+#[test]
+fn pdf_placeholder_title_is_ignored() {
+    pdfium();
+    match extract_one(&pdf_fx("no_title.pdf")) {
+        Outcome::Ok { doc, .. } => assert_eq!(doc.title, None),
+        other => panic!("{other:?}"),
+    }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kra-search"
+path = "src/main.rs"
+
+[dependencies]
+extract = { path = "../extract" }
+index = { path = "../index" }
+crawler = { path = "../crawler" }
+platform = { path = "../platform" }
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
+serde_json.workspace = true
+# 시험에서 meta.db 의 행을 직접 망가뜨리는 데만 쓴다(index 와 같은 SQLCipher 빌드).
+rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

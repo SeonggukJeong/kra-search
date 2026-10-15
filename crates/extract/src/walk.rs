@@ -43,14 +43,7 @@ fn collect_headings(nodes: &[StructureNode], out: &mut HashSet<(usize, usize)>) 
     }
 }
 
-fn is_private_use(c: char) -> bool {
-    matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
-}
-
-/// 한컴 전용 글자(PUA) 제거, 연속 공백 정리.
-pub(crate) fn clean(s: &str) -> String {
-    s.chars().map(|c| if is_private_use(c) { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
-}
+use crate::norm::clean;
 
 fn push_text(out: &mut Vec<Block>, kind: BlockKind, text: &str) {
     let t = clean(text);
@@ -74,6 +67,7 @@ fn control_blocks(c: &Control, out: &mut Vec<Block>, depth: usize) {
     match c {
         Control::Table(t) => table_blocks(t, out, depth),
         Control::Shape(s) => shape_blocks(s, out, depth),
+        Control::Picture(p) => caption_blocks(p.caption.as_ref(), out, depth),
         Control::Footnote(f) => f.paragraphs.iter().for_each(|p| inner_paragraph(p, out, depth)),
         Control::Endnote(e) => e.paragraphs.iter().for_each(|p| inner_paragraph(p, out, depth)),
         // 머리말·꼬리말은 쪽마다 되풀이되는 장식이라 색인하지 않는다.
@@ -86,12 +80,26 @@ fn shape_blocks(s: &ShapeObject, out: &mut Vec<Block>, depth: usize) {
         return;
     }
     match s {
-        ShapeObject::Group(g) => g.children.iter().for_each(|c| shape_blocks(c, out, depth + 1)),
+        ShapeObject::Group(g) => {
+            caption_blocks(g.caption.as_ref(), out, depth);
+            g.children.iter().for_each(|c| shape_blocks(c, out, depth + 1));
+        }
+        ShapeObject::Picture(p) => caption_blocks(p.caption.as_ref(), out, depth),
         other => {
-            if let Some(tb) = other.drawing().and_then(|d| d.text_box.as_ref()) {
-                tb.paragraphs.iter().for_each(|p| inner_paragraph(p, out, depth));
+            if let Some(d) = other.drawing() {
+                if let Some(tb) = d.text_box.as_ref() {
+                    tb.paragraphs.iter().for_each(|p| inner_paragraph(p, out, depth));
+                }
+                caption_blocks(d.caption.as_ref(), out, depth);
             }
         }
+    }
+}
+
+/// 개체 캡션("그림 1. …")의 문단.
+fn caption_blocks(cap: Option<&rhwp::model::shape::Caption>, out: &mut Vec<Block>, depth: usize) {
+    if let Some(c) = cap {
+        c.paragraphs.iter().for_each(|p| inner_paragraph(p, out, depth));
     }
 }
 
@@ -206,6 +214,26 @@ mod tests {
         d.doc_info.para_shapes.push(ParaShape::default());
         d.sections.push(Section { paragraphs: paras, ..Section::default() });
         d
+    }
+
+    #[test]
+    fn picture_and_shape_captions_are_kept() {
+        use rhwp::model::image::Picture;
+        use rhwp::model::shape::Caption;
+        let cap = |t: &str| Caption { paragraphs: vec![para(t)], ..Caption::default() };
+        let pic = Picture { caption: Some(cap("그림 1. 조직도")), ..Picture::default() };
+        let mut rect = RectangleShape::default();
+        rect.drawing.caption = Some(cap("그림 2. 흐름도"));
+        let group = GroupShape { caption: Some(cap("그림 3. 묶음")), ..GroupShape::default() };
+        let d = doc_of(vec![
+            with_control("", Control::Picture(Box::new(pic))),
+            with_control("", Control::Shape(Box::new(ShapeObject::Rectangle(rect)))),
+            with_control("", Control::Shape(Box::new(ShapeObject::Group(group)))),
+        ]);
+        let text = all_text(&document_blocks(&d));
+        for needle in ["그림 1. 조직도", "그림 2. 흐름도", "그림 3. 묶음"] {
+            assert!(text.contains(needle), "{needle} 누락:\n{text}");
+        }
     }
 
     fn cell(row: u16, col: u16, text: &str, is_header: bool) -> Cell {

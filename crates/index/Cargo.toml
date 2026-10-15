@@ -5,4 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-embed = { path = "../embed" }
+doc = { path = "../doc" }
+serde_json.workspace = true
+# SQLCipher + OpenSSL 동봉 빌드. 기본 기능을 끄면 wasm 관련 의존이 빠진다.
+rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache"] }
+
+tantivy = "=0.26.2"
+# embed-ko-dic: 사전을 실행 파일에 넣는다(+87MB). 사전 원본은 tools/fetch-ko-dic.sh 가 미리 받아 둔다.
+lindera = { version = "=6.2.0", features = ["embed-ko-dic"] }
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3"

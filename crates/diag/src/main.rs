@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "kra-diag", version, about = "KRA 문서검색 M0 진단 도구")]
+#[command(name = "kra-diag", version, about = "KRA 문서검색 진단 도구")]
 struct Cli {
     #[command(subcommand)]
     cmd: Option<Cmd>,
@@ -42,7 +42,7 @@ enum Cmd {
         #[arg(long, default_value_t = 500_000)]
         flat_n: usize,
     },
-    /// HWP/HWPX 추출 통계만 측정
+    /// 문서(형식별) 추출 통계만 측정
     ExtractStats {
         #[arg(long)]
         root: Vec<PathBuf>,
@@ -56,6 +56,9 @@ enum Cmd {
         /// 추출 커버리지도 잰다
         #[arg(long)]
         coverage: bool,
+        /// pdfium 절대 경로(부모가 실행 파일 옆 것을 넘긴다)
+        #[arg(long)]
+        pdfium: Option<PathBuf>,
     },
     /// (내부용) 모델 하나를 측정해 JSON 한 줄 출력
     #[command(hide = true)]
@@ -63,6 +66,9 @@ enum Cmd {
         model: PathBuf,
         #[arg(long)]
         threads: usize,
+        /// 논리 코어 수(스레드 수 측정 범위)
+        #[arg(long, default_value_t = 0)]
+        logical: usize,
     },
 }
 
@@ -104,12 +110,15 @@ fn main() {
     let dir = exe_dir();
     let cmd = cli.cmd.unwrap_or(Cmd::All { root: vec![], models: None, skip_flat: false, flat_n: 500_000 });
     match &cmd {
-        Cmd::ExtractOne { file, coverage } => {
+        Cmd::ExtractOne { file, coverage, pdfium } => {
+            if let Some(p) = pdfium {
+                let _ = extract::pdf::init(p);
+            }
             extract::cli::extract_one_main(file, *coverage);
             return;
         }
-        Cmd::BenchOne { model, threads } => {
-            let r = bench::bench_model(model, Some(&dir), *threads);
+        Cmd::BenchOne { model, threads, logical } => {
+            let r = bench::bench_model(model, Some(&dir), *threads, (*logical).max(*threads));
             println!("{}", serde_json::to_string(&r).unwrap());
             return;
         }

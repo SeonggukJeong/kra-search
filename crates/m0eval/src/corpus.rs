@@ -5,6 +5,8 @@ use std::path::Path;
 
 pub struct EvalDoc {
     pub id: String,
+    /// 매니페스트 제목 + 확장자 — 실제 PC 의 파일 이름 역할(키워드 파일명 필드)
+    pub name: String,
     pub doc: Document,
 }
 
@@ -33,12 +35,13 @@ pub fn load_docs(eval_dir: &Path) -> (Vec<EvalDoc>, Vec<(String, String)>) {
     let (mut ok, mut failed) = (Vec::new(), Vec::new());
     for e in m.doc {
         let path = eval_dir.join("docs").join(format!("{}.{}", e.id, e.ext));
+        let name = format!("{}.{}", e.title, e.ext);
         match extract::cli::extract_one(&path) {
             extract::runner::Outcome::Ok { mut doc, .. } => {
-                if doc.title.as_deref().map_or(true, |t| t.trim().is_empty()) {
+                if doc.title.as_deref().is_none_or(|t| t.trim().is_empty()) {
                     doc.title = Some(e.title.clone());
                 }
-                ok.push(EvalDoc { id: e.id, doc });
+                ok.push(EvalDoc { id: e.id, name, doc });
             }
             other => failed.push((e.id, format!("{other:?}"))),
         }

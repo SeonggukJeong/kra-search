@@ -3,6 +3,7 @@
 mod cache;
 mod corpus;
 mod experiments;
+mod keyword;
 mod metrics;
 
 use clap::Parser;
@@ -16,8 +17,12 @@ struct Args {
     /// 평가 세트 폴더(여러 번 지정 가능: `--eval eval/public --eval eval/kra`). 문서와 질의를 합친다.
     #[arg(long, default_values = ["eval/public"])]
     eval: Vec<PathBuf>,
-    #[arg(long, default_value = "docs/m0/eval-dev.md")]
-    out: PathBuf,
+    /// 저장 위치. 없으면 --keyword 는 docs/m1/eval-keyword.md, 그 밖에는 docs/m0/eval-dev.md
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// 키워드 검색만 평가한다(모델 불필요).
+    #[arg(long)]
+    keyword: bool,
     #[arg(long, default_value_t = 8)]
     threads: usize,
 }
@@ -32,6 +37,15 @@ fn main() {
         queries.extend(corpus::load_queries(dir));
     }
     eprintln!("문서 {} (실패 {}), 질의 {}", docs.len(), failed.len(), queries.len());
+    for (id, why) in &failed {
+        eprintln!("추출 실패: {id} {why}");
+    }
+    if a.keyword {
+        let out = a.out.clone().unwrap_or_else(|| PathBuf::from("docs/m1/eval-keyword.md"));
+        std::fs::write(&out, keyword::report(&docs, &queries)).unwrap();
+        eprintln!("저장: {}", out.display());
+        return;
+    }
     let mut models: Vec<PathBuf> = std::fs::read_dir(&a.models)
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -70,6 +84,7 @@ fn main() {
         writeln!(s, "## 6. 출처별 섹션으로 나눠 보여 주면 (512차원 · 청크 400 · 청크 점수)\n\n{}",
             experiments::section_table(&runs, &queries, "kra", 512, 400)).unwrap();
     }
-    std::fs::write(&a.out, s).unwrap();
-    eprintln!("저장: {}", a.out.display());
+    let out = a.out.clone().unwrap_or_else(|| PathBuf::from("docs/m0/eval-dev.md"));
+    std::fs::write(&out, s).unwrap();
+    eprintln!("저장: {}", out.display());
 }

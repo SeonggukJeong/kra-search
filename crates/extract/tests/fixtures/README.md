@@ -9,6 +9,7 @@ rhwp 저장소(https://github.com/edwardkim/rhwp, MIT, rev 1a76570) `samples/`�
 | form.hwp | 복학원서.hwp |
 | table-text.hwpx | 표-텍스트.hwpx |
 | distribution.hwpx | task1768/distribution_doc.hwpx (배포용 플래그, 서울 정보소통광장 공개 결재문서) |
+| formatting_table.hml | samples/hml/formatting_table.hml (HWPML 2.91, KI-010 시험) |
 
 직접 만든 파일:
 - corrupt.hwp — form.hwp 앞 4KB만 자른 손상 파일
@@ -23,3 +24,11 @@ rhwp 저장소(https://github.com/edwardkim/rhwp, MIT, rev 1a76570) `samples/`�
 | notice_clauses.hwpx | P0522 | 보건복지부 "노인을 위한 도시는 있다" 고령친화도시 지정제도 본격 추진 (korea.kr newsId=156783899) | 고시 조문(제N조·항·호)의 본문 없는 제목 줄 |
 | press_binary.hwp | P0989 | 산림청 양산산림항공관리소, 통도사 일원서 대대적 합동 캠페인 (korea.kr newsId=156783153) | 바이너리 HWP 본문·표 |
 | press_textbox.hwpx | P0169 | 관계부처 합동 10월 일자리전담반(TF) 개최 (korea.kr newsId=156784628) | 글상자 안 글자 |
+
+## 사무 문서·텍스트 (`office/`)
+`tools/fixtures/make_office.py` 로 만든 합성 문서(표준 라이브러리 zipfile, 내용은 모두 지어낸 것).
+다시 만들 때: `python3 -I tools/fixtures/make_office.py crates/extract/tests/fixtures/office` — ZIP 시각을 고정해 같은 바이트가 나온다.
+`encrypted.odt` 는 암호 ODF 의 겉모양(manifest 의 encryption-data + 가짜 암호문)만 흉내 낸 것으로, 실제 암호로는 열리지 않는다.
+
+## PDF (`pdf/`)
+`tools/fixtures/make_pdf.py`(reportlab 5.0.1) 로 만든 합성 문서. 글꼴을 임베드하지 않는다 — 한글은 비임베드 CID 글꼴 HYGothic-Medium, "깨진 글자"는 Helvetica 로 Latin-1 문자를 찍어 흉내 냈다. `encrypted.pdf` 는 사용자 암호 `pw`(열 때 암호 필요).
