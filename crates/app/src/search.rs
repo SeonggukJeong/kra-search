@@ -86,7 +86,15 @@ impl Searcher {
         };
         let cached = store.meta.kv(model::MODEL_HASH_KV).map_err(user_error)?;
         // 색인과 같은 계산(model::fingerprint_of)을 쓴다 — 따로 계산하면 지문이 어긋난다.
-        let (fp, _) = model::fingerprint_of(path, cached.as_deref()).map_err(|e| format!("모델 파일을 읽지 못했습니다: {e}"))?;
+        let fp = match model::fingerprint_of(path, cached.as_deref()) {
+            Ok((fp, _)) => fp,
+            Err(e) => {
+                // 잠긴·권한 없는·복사 중인 모델 파일이어도 키워드 검색은 돌려준다(스펙 §3.5).
+                let mut s = Self::with_embedder(store, home, None, None)?;
+                s.notice = Some(format!("모델 파일을 읽지 못해 키워드 검색만 합니다: {e}"));
+                return Ok(s);
+            }
+        };
         // 벡터가 있을 때만 모델을 불러온다(검색어 임베딩 — 1초 안팎).
         let probe = vectors::load_sets(home, &store.meta, Some(&fp))?;
         let embedder: Option<Box<dyn Embed>> = if probe.state == SetsState::Ready {
@@ -134,7 +142,7 @@ impl Searcher {
             sets,
             docs: MapMeta { dates, chunked, title_years },
             embedder,
-            profile: ModelProfile::embeddinggemma2(),
+            profile: model::profile(),
             table: DateTable::builtin(),
             params: HybridParams::default(),
             notice,

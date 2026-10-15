@@ -657,9 +657,10 @@ impl Meta {
         Ok(v)
     }
 
-    /// 내용 → 화면에 보이는 제목. 검색 핵심이 제목에서 연도를 읽는 데 쓴다("작년 경마시행계획" 이 2025년 계획을
-    /// 찾게). 제목이 비어 있지 않으면 제목, 아니면 가장 최근 경로의 파일 이름(확장자 포함 — 호출자는 연도만 훑는다).
-    /// 경로 없는 내용(고아)은 빠진다.
+    /// 내용 → 제목 글. 검색 핵심이 여기서 연도를 읽는 데 쓴다("작년 경마시행계획" 이 2025년 계획을 찾게).
+    /// 문서 안 제목(비어 있지 않을 때)과 가장 최근 경로의 파일 이름(확장자 포함)을 줄바꿈으로 이어 붙인다 —
+    /// 호출자가 두 글에서 읽은 연도의 합집합을 쓴다(제목에 연도가 없어도 파일 이름의 연도를 놓치지 않게).
+    /// 제목이 없으면 파일 이름뿐. 경로 없는 내용(고아)은 빠진다.
     pub fn title_texts(&self) -> Result<HashMap<i64, String>> {
         let sql = format!("SELECT c.id, c.title, f.path FROM content c {NEWEST}");
         let mut st = self.conn.prepare(&sql)?;
@@ -673,10 +674,11 @@ impl Meta {
         let mut out = HashMap::new();
         for row in rows {
             let (id, title, path) = row?;
+            // 경로 구분자는 `/`·`\` 둘 다(Windows 경로가 그대로 들어온다).
+            let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
             let text = match title.as_deref().map(str::trim) {
-                Some(t) if !t.is_empty() => t.to_string(),
-                // 경로 구분자는 `/`·`\` 둘 다(Windows 경로가 그대로 들어온다).
-                _ => path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string(),
+                Some(t) if !t.is_empty() => format!("{t}\n{name}"),
+                _ => name.to_string(),
             };
             out.insert(id, text);
         }
@@ -1131,7 +1133,7 @@ mod tests {
     }
 
     #[test]
-    fn title_texts_prefers_title_then_newest_file_name() {
+    fn title_texts_joins_title_and_newest_file_name() {
         let dir = tempfile::tempdir().unwrap();
         let mut m = Meta::open(&dir.path().join("meta.db"), &[15u8; 32]).unwrap();
         // 제목이 있는 내용
@@ -1161,7 +1163,7 @@ mod tests {
         let t = m.title_texts().unwrap();
         assert_eq!(
             t.get(&titled).map(String::as_str),
-            Some("2025 경마시행계획")
+            Some("2025 경마시행계획\nx.hwp")
         );
         assert_eq!(
             t.get(&untitled).map(String::as_str),
@@ -1170,6 +1172,12 @@ mod tests {
         assert!(!t.contains_key(&orphan));
         assert_eq!(t.get(&win).map(String::as_str), Some("2025년 계획.hwp"));
         assert_eq!(t.len(), 3);
+        // 제목에 연도가 없어도 파일 이름의 연도가 합집합으로 남는다.
+        let no_year = m.insert_content(5, &data("경마시행계획")).unwrap();
+        m.upsert_file("/d/2025년 경마시행계획.hwp", 1, 10, no_year).unwrap();
+        let t = m.title_texts().unwrap();
+        assert_eq!(query::title_years(&t[&no_year]), vec![2025]);
+        assert_eq!(query::title_years(&t[&titled]), vec![2025]);
     }
 
     #[test]

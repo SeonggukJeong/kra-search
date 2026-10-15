@@ -63,6 +63,7 @@ fn semantic_paths_take_part_when_vectors_match() {
     // 기본값(Task 16 이 정함)에 기대지 않는다: 하한 없이 청크 우선 결합.
     s.params.floor = 0.0;
     s.params.combine = Combine::ChunkElseCard;
+    s.params.w_semantic = [1.0, 1.0];
     let (_, hits) = s.search(&store, "렛츠런파크 운영", today(), 10).unwrap();
     assert!(!hits.is_empty());
     assert!(hits.iter().any(|h| h.why.card.is_some() || h.why.chunk.is_some()), "의미 경로가 결합에 들어간다");
@@ -73,7 +74,11 @@ fn semantic_paths_take_part_when_vectors_match() {
 fn model_change_disables_semantic_until_reindex() {
     let (_d, _h, home, store) = setup(&[("office/sample.docx", "운영계획.docx", "2026-09-01")]);
     let mut s = Searcher::with_embedder(&store, &home, Some(Box::new(FakeEmbedder::default())), Some("다른모델")).unwrap();
-    assert!(s.notice.as_deref().unwrap().contains("index"), "{:?}", s.notice);
+    assert_eq!(
+        s.notice.as_deref(),
+        Some("검색 모델이나 설정이 바뀌어 의미 검색을 쓰지 않습니다. `kra-search index` 를 실행하면 다시 만듭니다."),
+        "ModelChanged 안내여야 한다(Unreadable 과 구분)"
+    );
     let (_, hits) = s.search(&store, "렛츠런파크", today(), 10).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].why.card.is_none() && hits[0].why.chunk.is_none());
@@ -113,9 +118,24 @@ fn last_year_query_prefers_title_year_over_file_date() {
     s.params.date_exact = 5.0;
     s.params.date_vague = 2.5;
     s.params.date_title_conflict = 0.0;
+    s.params.recency = 0.0;
+    s.params.rrf_k = 60.0;
+    s.params.strip_relative = true;
     let (pq, hits) = s.search(&store, "작년 경마시행계획", today(), 10).unwrap();
     assert_eq!(pq.chips().count(), 1);
     assert_eq!(hits.len(), 2, "{hits:?}");
     assert!(hits[0].hit.paths[0].contains("2025년"), "{:?}", hits.iter().map(|h| &h.hit.paths).collect::<Vec<_>>());
     assert!(hits[0].why.date_boost > hits[1].why.date_boost);
+}
+
+/// 읽을 수 없는 모델 경로(디렉터리 — 어느 OS 에서나 읽기에 실패한다)여도 검색은 키워드로 돌아간다.
+/// 잠금·권한·복사 중 같은 실제 원인은 이식성 있게 만들 수 없어 같은 오류 경로(`fingerprint_of` 의 Err)를 이것으로 지나간다.
+#[test]
+fn unreadable_model_falls_back_to_keyword_only() {
+    let (d, _h, home, store) = setup(&[("office/sample.docx", "운영계획.docx", "2026-09-01")]);
+    let mut s = Searcher::open(&store, &home, Some(d.path()), 1).unwrap();
+    assert!(s.notice.as_deref().unwrap().starts_with("모델 파일을 읽지 못해 키워드 검색만 합니다"), "{:?}", s.notice);
+    let (_, hits) = s.search(&store, "렛츠런파크", today(), 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].why.card.is_none() && hits[0].why.chunk.is_none());
 }
