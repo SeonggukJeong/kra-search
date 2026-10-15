@@ -53,6 +53,7 @@
 연말	year_part	late	exact
 연중	year_part	whole	vague
 연말연시	year_part	turn	exact
+초순	month_part	early	exact
 초	month_part	early	exact
 상순	month_part	early	exact
 중순	month_part	mid	exact
