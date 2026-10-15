@@ -7,6 +7,10 @@
   제목에 쓴 연도가 그 기간과 겹쳐야 하고, `future` 면 미래 표현 질의다.
   제목 연도가 파일 날짜보다 우선한다(사용자 요구 2026-10-15: 2026년에 "작년 경마시행계획" = 2025년 경마시행계획).
   제목 연도는 절대 연도만 읽는다: `2025년`, `25년`, `'25` → 2025.
+- 6번째 열이 `recurring` 이면 연도 없는 되풀이 시기(연말·9월 말·3분기 …, 해석기의 `DateSpan.yearless`)다:
+  5번째 열(가장 최근 해의 기간)을 해 단위로 옮긴 같은 시기(2000~2030년) 어느 것에든 날짜가 들거나
+  제목 연도가 겹치면 통과(사용자 요구 2026-10-15: "연말에 나온 경마시행계획"은 해마다 연말에 나온 것 모두).
+  `recurring` 표시와 해석기의 yearless 가 같은지는 crates/query/tests/eval_dates.rs 가 확인한다.
 
 사용: python3 tools/eval/check_sets.py eval/public eval/kra eval/data
 """
@@ -28,6 +32,14 @@ TITLE_YEAR = [
 
 def day(s: str) -> dt.date:
     return dt.date.fromisoformat(s)
+
+
+def shift_year(d: dt.date, k: int) -> dt.date:
+    """k 해 옮긴 같은 월·일(2월 29일은 평년이면 28일)."""
+    try:
+        return d.replace(year=d.year + k)
+    except ValueError:
+        return d.replace(year=d.year + k, day=28)
 
 
 def title_years(title: str) -> list[int]:
@@ -83,14 +95,21 @@ def main() -> None:
                     errors.append(f"{q}:{n} date 질의에 기간 열(5번째) 없음")
                     continue
                 a, b = (day(x) for x in rng.split(".."))
+                mark = c[5].strip() if len(c) > 5 else ""
+                if mark not in ("", "recurring"):
+                    errors.append(f"{q}:{n} 6번째 열은 비우거나 recurring ({mark!r})")
+                periods = [(a, b)]
+                if mark == "recurring":
+                    periods = [(shift_year(a, k), shift_year(b, k)) for k in range(2000 - a.year, 2031 - a.year)]
                 for i in ids:
                     if i not in dates:
                         continue
-                    by_date = a <= dates[i] <= b
-                    by_title = any(dt.date(y, 1, 1) <= b and a <= dt.date(y, 12, 31) for y in years[i])
+                    by_date = any(pa <= dates[i] <= pb for pa, pb in periods)
+                    by_title = any(dt.date(y, 1, 1) <= pb and pa <= dt.date(y, 12, 31) for y in years[i] for pa, pb in periods)
                     if not (by_date or by_title):
                         ys = ",".join(map(str, years[i])) or "없음"
-                        errors.append(f"{q}:{n} {i} 날짜 {dates[i]} · 제목 연도 {ys} 모두 기간 {rng} 밖")
+                        where = f"해마다 같은 시기({rng} 기준)" if mark else f"기간 {rng}"
+                        errors.append(f"{q}:{n} {i} 날짜 {dates[i]} · 제목 연도 {ys} 모두 {where} 밖")
     for e in errors:
         print(e)
     print(f"{'실패' if errors else '통과'}: 문서 {len(dates)} · 질의 {len(seen)}")

@@ -1,4 +1,4 @@
-//! eval/*/queries.tsv 의 date 질의: 5번째 열(기간)과 해석 결과가 같아야 한다(기준일 2026-10-15).
+//! eval/*/queries.tsv 의 date 질의: 5번째 열(기간)과 해석 결과가 같아야 하고, 6번째 열 `recurring` 은 yearless 표현에만 있어야 한다(기준일 2026-10-15).
 
 use query::calendar::{format_ymd, parse_ymd};
 use query::DateTable;
@@ -23,10 +23,13 @@ fn eval_date_queries_parse_to_their_range() {
                 assert!(spans.iter().all(|s| s.range.is_none()) && !spans.is_empty(), "{}: {:?}", c[0], spans);
                 continue;
             }
-            let chips: Vec<_> = spans.iter().filter_map(|s| s.range).collect();
+            let chips: Vec<_> = spans.iter().filter(|s| s.range.is_some()).collect();
             assert_eq!(chips.len(), 1, "{} '{}': {:?}", c[0], c[1], spans);
-            let got = format!("{}..{}", format_ymd(chips[0].start), format_ymd(chips[0].end));
+            let r = chips[0].range.unwrap();
+            let got = format!("{}..{}", format_ymd(r.start), format_ymd(r.end));
             assert_eq!(got, c[4], "{} '{}'", c[0], c[1]);
+            // 6번째 열 `recurring`(해마다 같은 시기의 문서도 정답) = 해석기의 yearless.
+            assert_eq!(chips[0].yearless, c.get(5) == Some(&"recurring"), "{} '{}': recurring 표시와 yearless 가 다름", c[0], c[1]);
         }
     }
     assert_eq!(n, 30, "date 질의 30개(Task 3)");
