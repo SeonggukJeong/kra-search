@@ -3,11 +3,12 @@
 
 use crate::tokenize::{register, Analyzers, BIGRAM, MORPH};
 use std::path::Path;
+use tantivy::collector::sort_key::{SortBySimilarityScore, SortByStaticFastValue};
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value, FAST, INDEXED, STORED};
+use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, FAST, INDEXED, STORED};
 use tantivy::tokenizer::TokenStream;
-use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, TantivyError, Term};
+use tantivy::{Index, IndexReader, IndexWriter, Order, ReloadPolicy, TantivyDocument, TantivyError, Term};
 
 pub const BODY_MAX_CHARS: usize = 5_000_000;
 /// 스키마(schema())·토큰 규칙(tokenize.rs)·lindera·사전 버전 중 하나라도 바꾸면 1 올린다.
@@ -282,17 +283,14 @@ impl KeywordIndex {
         Ok(self.top_ids(&BooleanQuery::new(clauses), limit)?.into_iter().map(|x| x.0).collect())
     }
 
+    /// 점수 내림차순, 같으면 내용 id 오름차순(INC-021). tantivy 의 기본 순서는 같은 점수를 문서 주소(세그먼트·순번)로 가르므로
+    /// 넣은 순서·커밋 횟수·병합에 따라 바뀐다 — 그러면 하이브리드 결합의 키워드 순위가 흔들리고, 상한(keyword_limit)에서 잘리는
+    /// 문서도 달라진다. 정렬 키에 doc_id(빠른 필드)를 넣어 상한 안팎까지 같은 규칙으로 고른다.
     fn top_ids(&self, q: &dyn Query, limit: usize) -> tantivy::Result<Vec<(u64, f32)>> {
         let searcher = self.reader.searcher();
-        let hits = searcher.search(q, &TopDocs::with_limit(limit.max(1)).order_by_score())?;
-        let mut out = Vec::with_capacity(hits.len());
-        for (score, addr) in hits {
-            let d: TantivyDocument = searcher.doc(addr)?;
-            if let Some(id) = d.get_first(self.f.doc_id).and_then(|v| v.as_u64()) {
-                out.push((id, score));
-            }
-        }
-        Ok(out)
+        let by = ((SortBySimilarityScore, Order::Desc), (SortByStaticFastValue::<u64>::for_field("doc_id"), Order::Asc));
+        let hits = searcher.search(q, &TopDocs::with_limit(limit.max(1)).order_by(by))?;
+        Ok(hits.into_iter().filter_map(|((score, id), _)| id.map(|id| (id, score))).collect())
     }
 }
 
@@ -326,6 +324,24 @@ mod tests {
 
     fn ids_w(kw: &KeywordIndex, q: &str, w: &KeywordWeights) -> Vec<u64> {
         kw.search_with(q, 10, w).unwrap().into_iter().map(|x| x.0).collect()
+    }
+
+    /// INC-021: 점수가 같은 문서의 순서는 내용 id 오름차순 — 세그먼트 배치(넣은 순서·커밋 횟수)와 무관하고, 상한에서 잘릴 때도 같다.
+    #[test]
+    fn ties_break_by_content_id_regardless_of_segments() {
+        let same = || d(None, &[], &["회의 결과를 정리했다"]);
+        let one = index_of(&[(1, same(), "a.hwp"), (3, same(), "a.hwp"), (5, same(), "a.hwp")]);
+        let mut many = KeywordIndex::in_ram(&analyzers()).unwrap();
+        for id in [5, 3, 1] {
+            many.upsert(&KeywordDoc::new(id, Some(&same()), &["a.hwp".to_string()])).unwrap();
+            many.commit().unwrap();
+        }
+        for kw in [&one, &many] {
+            assert_eq!(ids(kw, "회의"), vec![1, 3, 5]);
+            assert_eq!(kw.search("회의", 2).unwrap().into_iter().map(|x| x.0).collect::<Vec<_>>(), vec![1, 3], "상한에서도 id 순");
+            let mut ph = kw.phrase_ids("회의 결과", 10).unwrap();
+            assert_eq!(ph.clone(), { ph.sort(); ph }, "구절 목록도 같은 규칙");
+        }
     }
 
     #[test]

@@ -25,6 +25,7 @@
 | [INC-018](#inc-018) | pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" | app | `app/tests/cli.rs` `pdf_is_skipped_without_pdfium_and_read_later` |
 | [INC-019](#inc-019) | 실패 분류 섞임: 내부 상한이 "100MB 넘는 파일", 진단의 비정상 종료가 시간 초과로 | extract·app·diag | `FailKind::TooComplex` + 코드 고정 시험, `app` 안내 시험, `diag` 집계 시험 |
 | [INC-020](#inc-020) | m1-diag-1 이 M2 에 필요한 수치를 못 냄(청크 400 기준·전체 추정 없음) | diag | `embed::chunk::BODY_CHUNK` 공유 상수, 요약 시험, 릴리즈 전 "다음 마일스톤 수치" 점검(런북 1단계) |
+| [INC-021](#inc-021) | 키워드 점수가 같은 문서의 순서가 색인 세그먼트 배치에 따라 달라짐(일치 검사에서 발견) | index | `top_ids` 정렬 키 (점수↓, 내용 id↑), `keyword::tests::ties_break_by_content_id_regardless_of_segments`, 일치 검사 (i) 상위 100 완전 일치 |
 
 ---
 
@@ -187,3 +188,12 @@ pdfium 이 없으면 모든 PDF 가 영구히 "열 수 없는 파일" · 2026-10
 - **고친 방법**: 앱과 진단이 같은 `embed::chunk::BODY_CHUNK` 를 쓴다. 형식별 청크·청크 입력 토큰 합과 찾은 파일 전체 추정, 실측 카드 길이와 본문 전체의 모델별 환산 시간, 성능·효율 코어 수와 그 1·2배 스레드, 수정일 경과 구간과 가장 많이 몰린 하루의 비율을 더해 m1-diag-2 로 다시 냈다(DEC-045). m1-diag-1 은 지우지 않고 대체 표시(DEC-019).
 - **재발 방지 장치**: 공유 상수 `BODY_CHUNK`(크기를 바꾸면 진단도 같이 바뀜), `diag/src/report.rs` `summary_shows_m2_estimates`·`cpu_line_shows_hybrid_split_only_when_hybrid`, `diag/src/extract_stats.rs` `chunk_totals_accumulate_per_format`·`estimate_scales_each_format_by_found_over_processed`·`mtime_buckets_and_top_day_share`, `diag/tests/report.rs` 새 항목 확인. 런북 `release-diag.md` 1단계에 "다음 마일스톤이 이 결과로 정할 것과 보고서 항목 대조"를 추가.
 - **교훈**: 폐쇄망 측정은 한 번 가져가는 데 사용자의 하루가 든다 — 태그 전에 다음 마일스톤 계획이 이 보고서에서 읽을 숫자를 목록으로 만들어 대조한다. 결정한 설정값은 진단에 복사하지 말고 공유 상수로 가리킨다.
+
+### INC-021
+키워드 점수가 같은 문서의 순서가 색인 세그먼트 배치에 따라 달라짐 · 2026-10-16 (M2 Task 17 일치 검사)
+- **증상**: 일치 검사 (i)(DEC-059: 제품이 저장한 벡터를 m0eval 에 그대로 넣어 순위 비교)에서 상위 100개가 순서까지 같은 질의가 196/255. 상위 10개는 모두 같았고, 21~57위 근처에서 이웃한 두세 문서의 자리가 바뀌었다(예: Q021 35위부터 P0240·P0116·P0723 순서).
+- **원인**: `KeywordIndex::top_ids` 가 tantivy `TopDocs::order_by_score()` 순서를 그대로 썼다. tantivy 는 점수가 같은 문서를 문서 주소(세그먼트·세그먼트 안 순번) — 그나마 최상위 N 힙에서는 일정하지도 않게 — 로 가른다. 제품 색인은 `FLUSH_EVERY` 마다 커밋해 세그먼트가 여럿이고(병합에 따라 또 바뀜), m0eval 은 메모리 색인에 한 번에 커밋한다. 같은 BM25 점수(같은 서식 문서·같은 필드 길이)인 문서의 키워드 순위가 서로 달라 RRF 결합 순위가 갈렸다. 제품 안에서도 같은 문서 집합의 결과가 색인 이력(넣은 순서·병합)에 따라 바뀔 수 있었다. 점수가 같은 문서가 `keyword_limit`(200) 경계에 걸리면 어느 쪽이 목록에 들어가는지도 달라졌다.
+- **고친 방법**: `top_ids` 의 정렬 키를 (BM25 점수 내림차순, `doc_id` 빠른 필드 오름차순) 으로 바꿨다(`TopDocs::order_by` 튜플 키 — 상한 경계도 같은 규칙). 저장 필드를 읽지 않으므로 질의당 비용은 그대로(5만 문서 메모리 색인, 상위 200: 0.34~5.6ms → 0.45~5.8ms, 이전 코드의 저장 필드 읽기 200회는 빠짐). 앱 평가 덤프를 다시 만들어(색인은 재사용) (i) 255/255.
+- **재발 방지 장치**: `index::keyword::tests::ties_break_by_content_id_regardless_of_segments`(한 세그먼트·커밋 3번 역순 색인에서 같은 순서, 상한 2 에서도 id 순). 일치 검사 (i) 가 상위 100 을 순서까지 비교한다(`m0eval --parity`, DEC-059).
+- **영향**: 기존 평가 보고서(`docs/m1/eval-keyword.md`, `docs/m2/eval-hybrid.md`)는 고치기 전 순서로 계산됐다 — 동점 문서의 순서만 바뀌므로 차이는 작고, 앱 평가 nDCG@10 은 고치기 전후 0.8762 로 같았다. 다시 만들지 않았다.
+- **교훈**: 검색 엔진의 동점 순서는 저장 배치의 부산물이다. 점수가 같을 수 있는 목록은 모두 안정된 키(내용 id)로 가른다 — 하이브리드 코어의 다른 목록(카드·청크·결합)은 이미 id 로 가르고 있었고, 키워드 목록만 빠져 있었다.
