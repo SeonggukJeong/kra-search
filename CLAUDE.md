@@ -1,7 +1,7 @@
 # kra-search
 
 한국 공공기관(한국마사회 우선)용 Windows 로컬 문서 검색 프로그램. Rust + llama.cpp(EmbeddingGemma 2) + rhwp(HWP), UI 는 Tauri 2. 저사양 PC·폐쇄망·비전문 사용자 대상.
-설계: `docs/superpowers/specs/2026-10-12-kra-search-design.md` · UI: `docs/design/ui-decisions.md` · 현재 진행: `docs/m0/results.md`
+설계: `docs/superpowers/specs/2026-10-12-kra-search-design.md` · UI: `docs/design/ui-decisions.md` · 현재 진행: M2 설계 `docs/superpowers/specs/2026-10-15-m2-hybrid-search-design.md` (직전 결과 `docs/m1/results.md`)
 
 ## 반드시 지킬 것
 - **실행 중 네트워크 0.** HTTP 크레이트 금지 — 실행 의존 그래프 기준(`deny.toml` + `tools/check-no-net.sh`, 빌드 스크립트 전용 예외는 DEC-034). 사용자 문서는 PC 밖으로 나가지 않는다.
