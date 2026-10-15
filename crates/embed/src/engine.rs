@@ -45,6 +45,12 @@ unsafe extern "C" fn quiet_log(_level: ggml_log_level, _text: *const c_char, _us
 fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
     BACKEND
         .get_or_init(|| unsafe {
+            // llama.cpp 로그를 끈다(KI-003). 계산 모듈을 불러올 때 DLL 전체 경로(사용자 이름 포함)를 찍으므로
+            // 반드시 `ggml_backend_load_all_from_path` 보다 먼저 한다(로그 콜백만 등록하므로 그 전에 불러도 안전).
+            // 문제를 볼 때는 환경변수 KRA_LLAMA_LOG 를 아무 값으로나 설정하면 로그가 켜진다.
+            if std::env::var_os("KRA_LLAMA_LOG").is_none() {
+                llama_log_set(Some(quiet_log), std::ptr::null_mut());
+            }
             // 폴더를 지정한 경우(제품·진단 도구)에만 그 폴더에서 계산 모듈을 불러오고 개수를 확인한다.
             // 지정하지 않으면(개발용 테스트) llama.cpp 가 모델을 불러올 때 기본 위치에서 찾는다.
             if let Some(d) = dir {
@@ -54,10 +60,6 @@ fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
                 if ggml_backend_dev_count() == 0 {
                     return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
                 }
-            }
-            // llama.cpp 로그(모델 경로 포함)를 끈다(KI-003). 문제를 볼 때는 KRA_LLAMA_LOG=1.
-            if std::env::var_os("KRA_LLAMA_LOG").is_none() {
-                llama_log_set(Some(quiet_log), std::ptr::null_mut());
             }
             llama_backend_init();
             Ok(())

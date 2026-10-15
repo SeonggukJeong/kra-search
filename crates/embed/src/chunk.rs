@@ -82,7 +82,7 @@ fn split_long(text: &str, max: usize, count: &dyn Fn(&str) -> usize) -> Vec<Stri
             out.push(rest.to_string());
             break;
         }
-        let mut cut =head.rfind(['.', '\n']).map(|i| i + 1).filter(|i| *i > head.len() / 2).unwrap_or(head.len());
+        let mut cut = head.rfind(['.', '\n']).map(|i| i + 1).filter(|i| *i > head.len() / 2).unwrap_or(head.len());
         if cut == 0 {
             // 한도가 글자 하나보다 작아도 반드시 앞으로 나아간다(무한 반복 방지).
             cut = rest.chars().next().map_or(rest.len(), char::len_utf8);

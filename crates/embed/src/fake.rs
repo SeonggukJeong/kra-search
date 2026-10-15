@@ -34,6 +34,10 @@ pub fn fake_vector(t: &str) -> Vec<f32> {
 impl Embed for FakeEmbedder {
     fn embed(&mut self, inputs: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
         self.calls += 1;
+        // 실제 `Embedder::embed` 와 같이 공백뿐인 입력은 거부한다.
+        if inputs.iter().any(|t| t.trim().is_empty()) {
+            return Err(EmbedError::EmptyInput);
+        }
         if let Some(f) = &self.fail_on {
             if inputs.iter().any(|t| t.contains(f.as_str())) {
                 return Err(EmbedError::Decode(-9));
@@ -60,6 +64,13 @@ mod tests {
         let c = fake_vector("경주마 수송 차량 냉방");
         assert!(cosine(&a, &b) > cosine(&a, &c));
         assert_eq!(a.len(), 768);
+    }
+
+    #[test]
+    fn blank_input_is_rejected_like_real_embedder() {
+        let mut f = FakeEmbedder::default();
+        assert!(matches!(f.embed(&["정상".into(), " \n\t".into()]), Err(EmbedError::EmptyInput)));
+        assert!(matches!(f.embed(&["".into()]), Err(EmbedError::EmptyInput)));
     }
 
     #[test]
