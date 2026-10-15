@@ -1,4 +1,6 @@
 //! kra-search 앱(M1: 명령줄). 색인의 유일한 쓰기 주체(스펙 §5.1). 화면(Tauri)은 M3.
+pub mod embedding;
+pub mod model;
 mod pipeline;
 mod search;
 mod store;

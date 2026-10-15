@@ -1,13 +1,16 @@
 //! kra-search 명령줄. `kra-search index`, `kra-search search 검색어`, `kra-search status`.
 
+use app::embedding::{embed_line, run_embedding, EmbedOptions};
+use app::model::{self, MODEL_FILE};
 use app::{fail_label, lock_index, open_store, open_store_readonly, reset_store, run_index, search, IndexError, IndexSummary, Store};
 use clap::{Parser, Subcommand};
+use embed::engine::{Embedder, EngineOptions};
 use extract::worker::Worker;
 use index::tokenize::Analyzers;
 use platform::paths::Home;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
 #[command(name = "kra-search", version, about = "KRA 문서검색 (M1 명령줄)")]
@@ -21,6 +24,12 @@ struct Cli {
     /// 파일당 제한 시간(초)
     #[arg(long, global = true, hide = true, default_value_t = 30)]
     timeout_secs: u64,
+    /// 의미 검색 모델(GGUF). 기본: 실행 파일 옆 models\embeddinggemma-2-Q8_0.gguf
+    #[arg(long, global = true)]
+    model: Option<PathBuf>,
+    /// 의미 검색 색인 스레드 수(기본: 성능 코어 수, 최대 4)
+    #[arg(long, global = true)]
+    threads: Option<usize>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -32,6 +41,9 @@ enum Cmd {
         /// 색인할 폴더(여러 번 지정 가능). 지정하면 저장된 폴더 목록을 바꾼다.
         #[arg(long)]
         root: Vec<PathBuf>,
+        /// 텍스트·CSV·엑셀 파일 뒷부분까지 정밀 의미 검색(on/off, 저장됨)
+        #[arg(long, value_parser = ["on", "off"])]
+        data_tail: Option<String>,
     },
     /// 색인에서 찾는다. 낱말 여러 개를 따옴표 없이 써도 된다(`--limit` 은 검색어 앞에).
     Search {
@@ -107,6 +119,60 @@ fn index_once(store: &mut Store, worker: &mut Worker, roots: &mut Vec<PathBuf>, 
     run_index(store, worker, roots, timeout, pdf_reader)
 }
 
+/// 키워드 색인 뒤 의미 검색 색인(DEC-046). 모델이 없거나 못 불러오면 키워드만으로 끝낸다(M2 설계 §3.5).
+/// meta 손상은 `MetaCorrupt` 로 돌려준다 — 부르는 쪽이 키워드 단계와 같이 한 번 처음부터 다시 만든다.
+fn index_semantic(cli: &Cli, home: &Home, store: &mut Store, data_tail: Option<&str>) -> Result<(), IndexError> {
+    if let Some(v) = data_tail {
+        store.meta.set_kv("data_tail", v)?;
+    }
+    let tail = store.meta.kv("data_tail")?.as_deref() != Some("off");
+    let Some(path) = model::model_path(&cli.model) else {
+        eprintln!("의미 검색 모델({MODEL_FILE})을 찾지 못해 키워드 검색만 준비했습니다.");
+        return Ok(());
+    };
+    let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
+    let (fp, cache) = model::fingerprint_of(&path, store.meta.kv(model::MODEL_HASH_KV)?.as_deref())
+        .map_err(|x| IndexError::Other(format!("모델 파일을 읽지 못했습니다: {x}")))?;
+    store.meta.set_kv(model::MODEL_HASH_KV, &cache)?;
+    let profile = model::profile();
+    let mut m = match Embedder::load(&path, &EngineOptions { threads, max_tokens: 1024, backend_dir: model::exe_dir() }) {
+        Ok(m) => m,
+        Err(x) => {
+            eprintln!("의미 검색 모델을 불러오지 못해 키워드 검색만 준비했습니다: {x}");
+            return Ok(());
+        }
+    };
+    let s = run_embedding(store, home, &mut m, &fp, &profile, &EmbedOptions { data_tail: tail, stop_after_append: None }, &mut |c| eprint!("\r{}", embed_line(c)))?;
+    eprintln!();
+    for (k, v) in [("stat_cards_secs", s.secs_cards), ("stat_body_secs", s.secs_body)] {
+        store.meta.set_kv(k, &format!("{v:.1}"))?;
+    }
+    store.meta.set_kv("stat_threads", &threads.to_string())?;
+    let mut line = format!("의미 검색: 빠른 {}개 · 정밀 {}개 새로 만듦 ({threads}스레드)", s.cards, s.chunks);
+    if s.failed > 0 {
+        line += &format!(" · 만들지 못함 {}개", s.failed);
+    }
+    println!("{line}");
+    Ok(())
+}
+
+fn summary_line(s: &IndexSummary) -> String {
+    let mut line = format!(
+        "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 열 수 없는 파일 {}개(다시 시도 포함) · 접근 못 함 {}개",
+        s.scanned, s.changed, s.removed, s.extracted, s.reused, s.retried, s.failed, s.unreadable
+    );
+    if s.cloud_only > 0 {
+        line += &format!(" · 클라우드 전용이라 건너뜀 {}개", s.cloud_only);
+    }
+    if s.pdf_skipped > 0 {
+        line += &format!(" · PDF 건너뜀 {}개(다음에 다시)", s.pdf_skipped);
+    }
+    if s.changed_while_reading > 0 {
+        line += &format!(" · 읽는 중 바뀌어 다음에 다시 {}개", s.changed_while_reading);
+    }
+    line
+}
+
 /// 경로를 3개까지 보이고 나머지는 개수로.
 const SHOWN_DUPLICATE_PATHS: usize = 3;
 
@@ -119,7 +185,7 @@ fn duplicate_line(others: &[String]) -> String {
 
 fn run(cli: Cli) -> Result<(), String> {
     let pdfium = pdfium_path(&cli.pdfium);
-    if let Cmd::Worker = cli.cmd {
+    if let Cmd::Worker = &cli.cmd {
         if let Some(p) = &pdfium {
             // 실패해도 워커는 돈다 — PDF 만 "열 수 없는 파일"이 된다.
             let _ = extract::pdf::init(p);
@@ -130,8 +196,8 @@ fn run(cli: Cli) -> Result<(), String> {
     }
     let home = Home::new(cli.home.clone().unwrap_or_else(Home::default_root));
     let analyzers = Analyzers::load()?;
-    match cli.cmd {
-        Cmd::Index { root } => {
+    match &cli.cmd {
+        Cmd::Index { root, data_tail } => {
             let _lock = lock_index(&home)?;
             let mut store = open_store(&home, &analyzers)?;
             // 지정한 루트(없으면 index_once 가 저장된 루트를 읽어 채운다). 다시 만들 때 이 값을 다시 저장한다.
@@ -144,36 +210,36 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             let mut worker = Worker::new(worker_cmd(pdfium));
             let timeout = Duration::from_secs(cli.timeout_secs);
-            let s = match index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader) {
-                // 열 때는 멀쩡했지만 루트 목록·색인 도중 meta.db 손상이 드러남 — 한 번만 처음부터 다시 만든다.
-                Err(IndexError::MetaCorrupt) => {
-                    eprintln!();
-                    eprintln!("색인 데이터가 손상되어 처음부터 다시 만듭니다.");
-                    drop(store);
-                    reset_store(&home)?;
-                    store = open_store(&home, &analyzers)?;
-                    index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).map_err(|e| e.to_string())?
+            let mut rebuilt = false;
+            loop {
+                let t = Instant::now();
+                let r = index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).and_then(|s| {
+                    println!("{}", summary_line(&s));
+                    store.meta.set_kv("stat_keyword_secs", &format!("{:.1}", t.elapsed().as_secs_f64()))?;
+                    index_semantic(&cli, &home, &mut store, data_tail.as_deref())?;
+                    // 검색이 읽는 쪽까지 모두 확인(DEC-056) — 손상이면 아래에서 한 번 다시 만든다.
+                    Ok(store.meta.check()?)
+                });
+                match r {
+                    // 열 때는 멀쩡했지만 색인 도중(키워드든 의미 검색이든) meta.db 손상이 드러남 — 한 번만 처음부터 다시 만든다.
+                    Err(IndexError::MetaCorrupt) if !rebuilt => {
+                        rebuilt = true;
+                        eprintln!();
+                        eprintln!("색인 데이터가 손상되어 처음부터 다시 만듭니다.");
+                        drop(store);
+                        reset_store(&home)?;
+                        store = open_store(&home, &analyzers)?;
+                    }
+                    r => {
+                        r.map_err(|e| e.to_string())?;
+                        break;
+                    }
                 }
-                r => r.map_err(|e| e.to_string())?,
-            };
-            let mut line = format!(
-                "파일 {}개 확인 · 바뀐 파일 {}개 · 지운 파일 {}개 · 새로 읽음 {}개 · 같은 내용 재사용 {}개 · 다시 시도 {}개 · 열 수 없는 파일 {}개(다시 시도 포함) · 접근 못 함 {}개",
-                s.scanned, s.changed, s.removed, s.extracted, s.reused, s.retried, s.failed, s.unreadable
-            );
-            if s.cloud_only > 0 {
-                line += &format!(" · 클라우드 전용이라 건너뜀 {}개", s.cloud_only);
             }
-            if s.pdf_skipped > 0 {
-                line += &format!(" · PDF 건너뜀 {}개(다음에 다시)", s.pdf_skipped);
-            }
-            if s.changed_while_reading > 0 {
-                line += &format!(" · 읽는 중 바뀌어 다음에 다시 {}개", s.changed_while_reading);
-            }
-            println!("{line}");
         }
         Cmd::Search { limit, query } => {
             let store = open_store_readonly(&home, &analyzers)?;
-            let hits = search(&store, &query.join(" "), limit)?;
+            let hits = search(&store, &query.join(" "), *limit)?;
             if hits.is_empty() {
                 println!("결과 없음");
             }
@@ -194,6 +260,9 @@ fn run(cli: Cli) -> Result<(), String> {
             let roots = store.meta.roots().map_err(|e| IndexError::from(e).to_string())?;
             println!("색인 폴더: {}", if roots.is_empty() { "(없음)".to_string() } else { roots.join(", ") });
             println!("파일 {} · 내용 {} · 내용을 못 읽은 것 {} · 반영 대기 {} · 검색에 반영된 문서 {}", c.files, c.contents, c.failed, c.pending, store.keyword.num_docs());
+            let ec = store.meta.embed_counts(embed::plan::DATA_HEAD).map_err(|e| IndexError::from(e).to_string())?;
+            let tail = if store.meta.kv("data_tail").map_err(|e| IndexError::from(e).to_string())?.as_deref() == Some("off") { "끔" } else { "켬" };
+            println!("{} (텍스트·CSV·엑셀 파일 뒷부분: {tail})", embed_line(&ec));
             println!("저장 위치: {}", home.root().display());
         }
         Cmd::Worker => unreachable!(),

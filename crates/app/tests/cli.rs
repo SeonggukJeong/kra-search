@@ -49,6 +49,8 @@ impl Env {
         let out = Command::new(env!("CARGO_BIN_EXE_kra-search"))
             .arg("--home").arg(self.home.path())
             .arg("--pdfium").arg(pdfium)
+            // 개발 PC 의 target/release/models/ 에 실제 모델이 있어도 늘 키워드만 쓰게(실모델은 따로 본다).
+            .arg("--model").arg(self.home.path().join("모델없음.gguf"))
             .args(args)
             .output()
             .unwrap();

@@ -262,8 +262,9 @@ mod tests {
         assert_eq!(fingerprint(1, &p), fingerprint_with(1, &p, &tag), "공개 함수는 실제 tag 를 쓴다");
         let base = fingerprint_with(1, &p, &tag);
 
+        // 상수에서 만든다 — 평가(Task 16)가 CARD_TOKENS 를 바꿔도 시험이 깨지지 않게.
         let card = format!("card={}", embed::plan::CARD_TOKENS);
-        let card_changed = tag.replacen(&card, "card=128", 1);
+        let card_changed = tag.replacen(&card, &format!("card={}", embed::plan::CARD_TOKENS + 1), 1);
         assert_ne!(card_changed, tag, "카드 상한 부분이 실제로 바뀌었다");
         assert_ne!(base, fingerprint_with(1, &p, &card_changed));
 
