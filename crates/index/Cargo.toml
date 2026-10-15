@@ -8,6 +8,8 @@ license.workspace = true
 doc = { path = "../doc" }
 serde.workspace = true
 serde_json.workspace = true
+query = { path = "../query" }
+vector = { path = "../vector" }
 # SQLCipher + OpenSSL 동봉 빌드. 기본 기능을 끄면 wasm 관련 의존이 빠진다.
 rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl", "cache"] }
 

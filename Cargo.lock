@@ -1611,12 +1611,14 @@ version = "0.0.1"
 dependencies = [
  "doc",
  "lindera",
+ "query",
  "rusqlite",
  "serde",
  "serde_json",
  "tantivy",
  "tempfile",
  "unicode-normalization",
+ "vector",
 ]
 
 [[package]]
