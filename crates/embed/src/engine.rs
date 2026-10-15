@@ -40,6 +40,8 @@ pub enum EmbedError {
 
 static BACKEND: OnceLock<Result<(), String>> = OnceLock::new();
 
+unsafe extern "C" fn quiet_log(_level: ggml_log_level, _text: *const c_char, _user: *mut std::ffi::c_void) {}
+
 fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
     BACKEND
         .get_or_init(|| unsafe {
@@ -52,6 +54,10 @@ fn init_backend(dir: Option<&Path>) -> Result<(), EmbedError> {
                 if ggml_backend_dev_count() == 0 {
                     return Err("CPU용 계산 모듈(ggml-cpu-*.dll)을 찾지 못했습니다. 백신이 파일을 격리했는지 확인하세요".to_string());
                 }
+            }
+            // llama.cpp 로그(모델 경로 포함)를 끈다(KI-003). 문제를 볼 때는 KRA_LLAMA_LOG=1.
+            if std::env::var_os("KRA_LLAMA_LOG").is_none() {
+                llama_log_set(Some(quiet_log), std::ptr::null_mut());
             }
             llama_backend_init();
             Ok(())
