@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS chunk(
   PRIMARY KEY(content_id, pos)
 );
 CREATE INDEX IF NOT EXISTS chunk_slot ON chunk(slot);
+CREATE INDEX IF NOT EXISTS card_slot ON card(slot);
 ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +243,7 @@ impl Meta {
             .optional()?;
         match v.as_deref() {
             // v1(M1) → v2: 임베딩 테이블만 더한다 — 다시 추출하지 않는다(DEC-054).
+            // 두 문장이 따로지만 다시 실행해도 안전하다: SCHEMA 는 전부 IF NOT EXISTS 이고 버전은 마지막에 바꾼다.
             Some("1") => {
                 conn.execute_batch(SCHEMA)?;
                 conn.execute(
@@ -538,6 +540,7 @@ impl Meta {
         Ok(())
     }
 
+    /// 본문 청크 수 행(total = 청크 수, data = 데이터 형식 여부)을 기록한다.
     pub fn set_bodies(&mut self, rows: &[(i64, usize, bool)]) -> Result<()> {
         let tx = self.conn.transaction()?;
         for (id, total, data) in rows {
@@ -550,6 +553,7 @@ impl Meta {
         Ok(())
     }
 
+    /// 청크 수가 센 내용의 행(가장 최근 경로 포함). 경로 없는 내용은 빠진다.
     pub fn bodies(&self) -> Result<Vec<BodyRow>> {
         let sql = format!("SELECT c.id, b.total, b.data, f.mtime_ns, f.path FROM body b JOIN content c ON c.id = b.content_id {NEWEST} ORDER BY c.id");
         let mut st = self.conn.prepare(&sql)?;
@@ -567,6 +571,7 @@ impl Meta {
         Ok(v)
     }
 
+    /// 그 내용에서 이미 처리한 청크 위치(슬롯 없는 빈 청크 포함).
     pub fn chunk_positions(&self, id: i64) -> Result<HashSet<usize>> {
         let mut st = self
             .conn
@@ -578,6 +583,7 @@ impl Meta {
         Ok(v)
     }
 
+    /// 청크 행(slot None = 빈 청크·실패)과 파일 길이를 한 트랜잭션에(DEC-048: 파일 fsync 뒤에 부른다).
     pub fn add_chunks(
         &mut self,
         rows: &[(i64, usize, Option<u64>)],
@@ -631,6 +637,7 @@ impl Meta {
         Ok((gen, len, live))
     }
 
+    /// 벡터 슬롯이 있는 청크를 하나라도 가진 내용.
     pub fn chunked_contents(&self) -> Result<HashSet<i64>> {
         let mut st = self
             .conn
@@ -676,6 +683,7 @@ impl Meta {
         Ok(out)
     }
 
+    /// kv 값 하나를 읽는다(없으면 None).
     pub fn kv(&self, key: &str) -> Result<Option<String>> {
         Ok(self
             .conn
@@ -683,6 +691,7 @@ impl Meta {
             .optional()?)
     }
 
+    /// kv 값 하나를 쓴다(있으면 덮어쓴다).
     pub fn set_kv(&mut self, key: &str, value: &str) -> Result<()> {
         self.conn.execute("INSERT INTO kv(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value])?;
         Ok(())
@@ -699,6 +708,7 @@ impl Meta {
         Ok(())
     }
 
+    /// `map` 은 그 종류의 살아 있는 슬롯을 모두 덮어야 한다(빠진 슬롯은 옛 번호 그대로 남아 압축된 새 파일과 어긋난다).
     /// 압축 뒤 슬롯 번호를 바꾸고 새 세대·길이를 기록한다(옛 번호와 새 번호가 겹치지 않게 음수를 거친다).
     pub fn remap_slots(
         &mut self,
@@ -738,6 +748,7 @@ impl Meta {
         }
     }
 
+    /// 임베딩 진행 수(카드·본문 앞부분·데이터 뒷부분·미계획). data_head = 데이터 형식에서 먼저 처리하는 청크 수.
     pub fn embed_counts(&self, data_head: usize) -> Result<EmbedCounts> {
         // 매개변수 없는 질의와 data_head(?1) 를 쓰는 질의를 나눈다 — 안 쓰는 ?1 을 억지로 붙이지 않는다.
         let run = |sql: &str, bind: &[i64]| -> Result<u64> {
@@ -978,6 +989,8 @@ mod tests {
         assert_eq!(m.counts().unwrap().contents, 1);
         assert_eq!(m.kv("schema").unwrap().as_deref(), Some("2"));
         assert_eq!(m.card_todo().unwrap().len(), 1);
+        let idx: i64 = m.conn.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name IN ('card_slot', 'chunk_slot')", [], |r| r.get(0)).unwrap();
+        assert_eq!(idx, 2, "이전 뒤에도 슬롯 색인이 있어야 한다");
     }
 
     #[test]
@@ -1142,6 +1155,9 @@ mod tests {
             .unwrap();
         // 경로 없는 내용 — 빠진다
         let orphan = m.insert_content(3, &data("고아")).unwrap();
+        // Windows 경로(`\`)
+        let win = m.insert_content(4, &ContentData { fail: None, title: None, distribution: false, doc: None }).unwrap();
+        m.upsert_file(r"C:\d\2025년 계획.hwp", 1, 10, win).unwrap();
         let t = m.title_texts().unwrap();
         assert_eq!(
             t.get(&titled).map(String::as_str),
@@ -1152,7 +1168,8 @@ mod tests {
             Some("2025 시행계획.hwp")
         );
         assert!(!t.contains_key(&orphan));
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.get(&win).map(String::as_str), Some("2025년 계획.hwp"));
+        assert_eq!(t.len(), 3);
     }
 
     #[test]
