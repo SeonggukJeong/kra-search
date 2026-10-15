@@ -45,7 +45,8 @@ impl FlatIndex {
         self.bits.extend_from_slice(&r.bits);
     }
 
-    fn code(&self, i: usize) -> &[i8] {
+    /// `i` 번째 슬롯의 int8 코드(앞 `dim` 차원). 평가의 일치 검사가 제품 저장 벡터와 평가 벡터를 같은 양자화로 견줄 때 쓴다(DEC-059).
+    pub fn code(&self, i: usize) -> &[i8] {
         &self.codes[i * self.dim..(i + 1) * self.dim]
     }
 

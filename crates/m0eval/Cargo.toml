@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 app = { path = "../app" }
+platform = { path = "../platform" }
 query = { path = "../query" }
 doc = { path = "../doc" }
 embed = { path = "../embed" }

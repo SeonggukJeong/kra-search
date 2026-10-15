@@ -41,9 +41,12 @@ struct Args {
     /// 질의별 순위 JSON 저장
     #[arg(long)]
     dump: Option<PathBuf>,
-    /// 앱 `kra-search eval --dump` 결과와 비교(일치 검사)
+    /// 앱 `kra-search eval --dump` 결과와 비교(일치 검사, DEC-059)
     #[arg(long)]
     parity: Option<PathBuf>,
+    /// 일치 검사가 제품 저장 벡터를 읽을 평가 색인 폴더(`kra-search --home`)
+    #[arg(long, default_value = "target/eval-home")]
+    eval_home: PathBuf,
 }
 
 fn main() {
@@ -71,7 +74,7 @@ fn main() {
         std::fs::create_dir_all("docs/m2").unwrap();
         let w = hybrid::build(&docs, &failed, &queries, &hybrid::HArgs { model: a.model.clone(), threads: a.threads, now });
         if let Some(app) = &a.parity {
-            let (report, pass) = hybrid::parity(&w, &queries, app);
+            let (report, pass) = hybrid::parity(&w, &queries, &hybrid::ParityArgs { app_dump: app, home: &a.eval_home, model: &a.model, threads: a.threads });
             std::fs::write("docs/m2/parity.md", &report).unwrap();
             eprintln!("{report}");
             std::process::exit(if pass { 0 } else { 1 });

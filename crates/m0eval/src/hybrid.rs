@@ -55,7 +55,10 @@ pub struct World {
     chunks_all: VectorSet,
     meta_head: MapMeta,
     meta_all: MapMeta,
+    /// 검색어 벡터 — 제품 `Searcher` 처럼 하나씩 임베딩(DEC-059). 캐시 이름 "query1".
     qvec: HashMap<String, Vec<f32>>,
+    /// 예전처럼 8개씩 묶어 임베딩한 검색어 벡터(캐시 "query") — eval-hybrid.md 의 숫자가 이것으로 계산됨. 일치 검사 (iii) 참고용.
+    qvec_batched: HashMap<String, Vec<f32>>,
     /// 문서별 자르기 전 카드 토큰 수(결정 #27 판정)
     card_tokens: Vec<usize>,
     now: Day,
@@ -224,7 +227,13 @@ pub fn build(docs: &[EvalDoc], failed: &[FailedDoc], queries: &[Query], a: &HArg
     }
     qtexts.sort();
     qtexts.dedup();
-    let qvec: HashMap<String, Vec<f32>> = cache.get_or_compute("query", qtexts, |x| embed_all(&mut m, x)).into_iter().collect();
+    // 검색어는 제품처럼 하나씩 임베딩한다 — llama.cpp 출력은 같은 묶음(ubatch)의 다른 입력에 따라 조금 달라진다(코사인 ≈0.9998,
+    // DEC-059). 묶어 계산한 옛 캐시("query")와 섞이지 않게 캐시 이름을 따로 둔다.
+    let qvec: HashMap<String, Vec<f32>> = cache
+        .get_or_compute("query1", qtexts.clone(), |x| x.into_iter().map(|(k, t)| (k, m.embed(&[t]).expect("임베딩").pop().expect("벡터").vector)).collect())
+        .into_iter()
+        .collect();
+    let qvec_batched: HashMap<String, Vec<f32>> = cache.get_or_compute("query", qtexts, |x| embed_all(&mut m, x)).into_iter().collect();
 
     World {
         docs: hd,
@@ -235,6 +244,7 @@ pub fn build(docs: &[EvalDoc], failed: &[FailedDoc], queries: &[Query], a: &HArg
         meta_head: MapMeta { dates: dates.clone(), chunked: chunked_head, title_years: title_years.clone() },
         meta_all: MapMeta { dates, chunked: chunked_all, title_years },
         qvec,
+        qvec_batched,
         card_tokens,
         now: a.now,
         table,
@@ -244,9 +254,13 @@ pub fn build(docs: &[EvalDoc], failed: &[FailedDoc], queries: &[Query], a: &HArg
 impl World {
     /// 질의 하나의 문서 id 순위(상위 100) — 제품 검색 코어 그대로.
     pub fn rank(&self, cfg: &Cfg, q: &Query) -> Vec<String> {
+        self.rank_with(cfg, q, &self.qvec)
+    }
+
+    fn rank_with(&self, cfg: &Cfg, q: &Query, qvec: &HashMap<String, Vec<f32>>) -> Vec<String> {
         let pq = query::parse(&q.text, self.now, &self.table);
         let t = hybrid::query_texts(&pq, &cfg.params);
-        let qv = cfg.semantic.then(|| self.qvec.get(&t.semantic).map(|v| v.as_slice()).expect("검색어 벡터(날짜 빼기 4가지 조합에 없는 글)"));
+        let qv = cfg.semantic.then(|| qvec.get(&t.semantic).map(|v| v.as_slice()).expect("검색어 벡터(날짜 빼기 4가지 조합에 없는 글)"));
         let (chunks, meta) = if cfg.tail { (&self.chunks_all, &self.meta_all) } else { (&self.chunks_head, &self.meta_head) };
         hybrid::search(&self.kw, &self.cards[&cfg.cap], chunks, &pq, qv, &cfg.params, self.now, meta, 100)
             .expect("검색")
@@ -852,48 +866,213 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
     Outcome { report: s, params, cap, ranks }
 }
 
-/// 일치 검사(DEC-052): 같은 매개변수(제품 기본값)로 m0eval 과 앱 `eval --set` 의 순위를 비교한다.
-pub fn parity(w: &World, queries: &[Query], app_dump: &Path) -> (String, bool) {
-    let app: BTreeMap<String, Vec<String>> = serde_json::from_str(&std::fs::read_to_string(app_dump).expect("앱 덤프")).expect("덤프 JSON");
+/// 코사인 통계 한 줄: 개수 · 최소 · 하위 1% · 중앙값 · 기준 미만 개수(처음 몇 개).
+struct CosStats {
+    v: Vec<(f64, String)>,
+}
+
+impl CosStats {
+    fn new() -> Self {
+        CosStats { v: Vec::new() }
+    }
+    fn push(&mut self, c: f64, what: impl FnOnce() -> String) {
+        // 기준 미만인 것만 이름을 만든다(청크 2만여 개).
+        let name = if c < PARITY_COS { what() } else { String::new() };
+        self.v.push((c, name));
+    }
+    fn below(&self) -> usize {
+        self.v.iter().filter(|x| x.0 < PARITY_COS).count()
+    }
+    fn row(&self, label: &str, missing: &[String]) -> String {
+        let mut c: Vec<f64> = self.v.iter().map(|x| x.0).collect();
+        c.sort_by(f64::total_cmp);
+        let at = |q: f64| if c.is_empty() { f64::NAN } else { c[((c.len() - 1) as f64 * q).floor() as usize] };
+        let bad: Vec<&str> = self.v.iter().filter(|x| x.0 < PARITY_COS).take(5).map(|x| x.1.as_str()).collect();
+        let mut extra = String::new();
+        if !bad.is_empty() {
+            extra += &format!(" 예: {}", bad.join(", "));
+        }
+        if !missing.is_empty() {
+            extra += &format!(" · 한쪽에만 있음 {}개: {}", missing.len(), missing.iter().take(5).cloned().collect::<Vec<_>>().join(", "));
+        }
+        format!("| {label} | {} | {:.6} | {:.6} | {:.6} | {}{extra} |", c.len(), at(0.0), at(0.01), at(0.5), self.below())
+    }
+}
+
+/// 입력 벡터 일치 기준(DEC-059): 글·렌더링이 다르면 코사인이 훨씬 낮다. 같은 글의 묶음 잡음은 ≈0.9998.
+const PARITY_COS: f64 = 0.999;
+
+fn cos_i8(a: &[i8], b: &[i8]) -> f64 {
+    let (mut d, mut na, mut nb) = (0f64, 0f64, 0f64);
+    for (x, y) in a.iter().zip(b) {
+        let (x, y) = (*x as f64, *y as f64);
+        d += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    d / (na.sqrt() * nb.sqrt()).max(f64::MIN_POSITIVE)
+}
+
+fn cos_f32(a: &[f32], b: &[f32]) -> f64 {
+    let (mut d, mut na, mut nb) = (0f64, 0f64, 0f64);
+    for (x, y) in a.iter().zip(b) {
+        let (x, y) = (*x as f64, *y as f64);
+        d += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    d / (na.sqrt() * nb.sqrt()).max(f64::MIN_POSITIVE)
+}
+
+/// 슬롯 순서대로 (주인, 그 주인 안에서 몇 번째) → 슬롯. 제품·m0eval 모두 문서 하나의 청크를 일정(plan::schedule) 순서로 넣으므로
+/// "몇 번째"가 곧 청크 위치(우선순위 순서의 pos)다.
+fn by_owner_pos(owners: impl Iterator<Item = i64>) -> BTreeMap<(i64, usize), usize> {
+    let mut k: HashMap<i64, usize> = HashMap::new();
+    owners
+        .enumerate()
+        .map(|(slot, o)| {
+            let n = k.entry(o).or_default();
+            *n += 1;
+            ((o, *n - 1), slot)
+        })
+        .collect()
+}
+
+pub struct ParityArgs<'a> {
+    pub app_dump: &'a Path,
+    /// `kra-search --home <폴더> eval --set …` 의 색인 폴더(제품이 저장한 벡터를 읽는다)
+    pub home: &'a Path,
+    pub model: &'a Path,
+    pub threads: usize,
+}
+
+/// 일치 검사(DEC-052 → DEC-059): 제품 기본 매개변수로
+/// (i) 구조 — 제품이 저장한 카드·청크 벡터와 제품처럼 하나씩 임베딩한 검색어 벡터로 m0eval 이 순위를 내면 앱 덤프(상위 100, 순서까지)와 100% 같다.
+/// (ii) 입력 — m0eval 의 카드·청크 벡터(같은 int8 양자화 뒤)와 제품 저장 벡터, m0eval 검색어 벡터와 제품식 검색어 벡터의 코사인 ≥ 0.999.
+/// (iii) 참고 — m0eval 자체 벡터로 낸 순위와 앱의 nDCG@10 차이·상위 10 일치율(판정 안 함).
+pub fn parity(w: &World, queries: &[Query], a: &ParityArgs) -> (String, bool) {
+    let app_ranks: BTreeMap<String, Vec<String>> = serde_json::from_str(&std::fs::read_to_string(a.app_dump).expect("앱 덤프")).expect("덤프 JSON");
     let cfg = Cfg { params: HybridParams::default(), cap: plan::CARD_TOKENS, tail: true, semantic: true };
-    let (mut same, mut n, mut da, mut dm) = (0usize, 0usize, 0.0, 0.0);
-    let (mut fa, mut fm) = (0usize, 0usize);
-    let mut diff_q = Vec::new();
-    // 처음 몇 질의는 양쪽 상위 10개를 그대로 적는다 — 어긋남의 원인(날짜·카드·청크·검색어)을 좇는 출발점(Task 17 Step 7).
-    let mut diff_lists = Vec::new();
-    for q in queries {
-        let Some(a) = app.get(&q.qid) else { continue };
-        let m = w.rank(&cfg, q);
-        n += 1;
-        let top = |v: &[String]| v.iter().take(10).cloned().collect::<Vec<_>>();
-        if top(a) == top(&m) {
-            same += 1;
-        } else {
-            diff_q.push(q.qid.clone());
-            if diff_lists.len() < 3 {
-                diff_lists.push(format!("- {} `{}`\n  - 앱: {}\n  - m0eval: {}", q.qid, q.text, top(a).join(" "), top(&m).join(" ")));
+
+    // 제품 색인 열기 — 지금 모델의 지문과 같은 벡터만(제품 Searcher 와 같은 확인).
+    let home = platform::paths::Home::new(a.home);
+    let an = Analyzers::load().expect("형태소 사전");
+    let store = app::open_store_readonly(&home, &an).expect("평가 색인 폴더(--eval-home)");
+    let cached = store.meta.kv(app::model::MODEL_HASH_KV).expect("meta");
+    let (fp, _) = app::model::fingerprint_of(a.model, cached.as_deref()).expect("모델 지문");
+    let sets = app::vectors::load_sets(&home, &store.meta, Some(&fp)).expect("벡터 읽기");
+    assert!(sets.state == app::vectors::SetsState::Ready, "평가 색인의 의미 검색 벡터를 쓸 수 없음({:?}) — kra-search eval --set 을 먼저", sets.state);
+    // 제품 내용 id → m0eval 문서 번호(복사본 파일 이름의 "(id)")
+    let idx: HashMap<&str, i64> = w.docs.iter().enumerate().map(|(i, d)| (d.id.as_str(), i as i64)).collect();
+    let mut to_m: HashMap<i64, i64> = HashMap::new();
+    for cid in store.meta.newest_mtimes().expect("meta").keys() {
+        let files = store.meta.files_of(*cid).expect("meta");
+        let eid = app::evalset::id_of(&files[0].path).expect("복사본 이름의 (id)");
+        to_m.insert(*cid, *idx.get(eid.as_str()).unwrap_or_else(|| panic!("m0eval 에 없는 문서 {eid}")));
+    }
+    let remap = |s: VectorSet| VectorSet { owners: s.owners.iter().map(|o| to_m[o]).collect(), index: s.index };
+    let (p_cards, p_chunks) = (remap(sets.cards), remap(sets.chunks));
+    let name = |i: i64| w.docs[i as usize].id.clone();
+
+    // (ii) 카드·청크: 문서 id + 위치로 짝지어 int8 코드끼리 코사인(m0eval 쪽도 Record::from_full 로 같은 양자화를 거친 값).
+    let mut kinds = Vec::new();
+    for (label, p, m) in [("카드", &p_cards, &w.cards[&plan::CARD_TOKENS]), ("청크", &p_chunks, &w.chunks_all)] {
+        let (pm, mm) = (by_owner_pos(p.owners.iter().copied()), by_owner_pos(m.owners.iter().copied()));
+        let mut st = CosStats::new();
+        let mut missing = Vec::new();
+        for (&(o, k), &ps) in &pm {
+            match mm.get(&(o, k)) {
+                Some(&ms) => st.push(cos_i8(p.index.code(ps), m.index.code(ms)), || format!("{}#{k}", name(o))),
+                None => missing.push(format!("제품 {}#{k}", name(o))),
             }
         }
-        da += ndcg_at_k(a, &q.relevant, 10);
-        dm += ndcg_at_k(&m, &q.relevant, 10);
-        fa += app::evalset::first_page_hit(a, &q.relevant) as usize;
-        fm += app::evalset::first_page_hit(&m, &q.relevant) as usize;
+        missing.extend(mm.keys().filter(|x| !pm.contains_key(x)).map(|(o, k)| format!("m0eval {}#{k}", name(*o))));
+        kinds.push((label, st, missing));
     }
-    let (na, nm) = (da / n.max(1) as f64, dm / n.max(1) as f64);
-    let frac = same as f64 / n.max(1) as f64;
-    let pass = (na - nm).abs() <= 0.002 && frac >= 0.98 && n == queries.len();
+
+    // 검색어: 제품 Searcher 와 같은 글(query_texts(parse).semantic + 모델 프로필의 검색어 형식)을 하나씩 임베딩.
+    let mut m = Embedder::load(a.model, &EngineOptions { threads: a.threads, max_tokens: 1024, backend_dir: None }).expect("모델 불러오기");
+    let profile = app::model::profile();
+    let mut qst = CosStats::new();
+    let mut prod_q: HashMap<String, Vec<f32>> = HashMap::new();
+    for q in queries {
+        let pq = query::parse(&q.text, w.now, &w.table);
+        let t = hybrid::query_texts(&pq, &cfg.params).semantic;
+        let v = m.embed(&[profile.render_query(&t)]).expect("임베딩").pop().expect("벡터").vector;
+        qst.push(cos_f32(&v, &w.qvec[&t]), || q.qid.clone());
+        prod_q.insert(t, v);
+    }
+    kinds.push(("검색어", qst, Vec::new()));
+    let inputs_ok = kinds.iter().all(|(_, st, miss)| st.below() == 0 && miss.is_empty());
+
+    // (i) 구조: 같은 벡터 → 같은 순위(상위 100, 순서까지).
+    let top = |v: &[String], k: usize| v.iter().take(k).cloned().collect::<Vec<_>>();
+    let (mut n, mut same100) = (0usize, 0usize);
+    let mut diff_i = Vec::new();
+    for q in queries {
+        let Some(ar) = app_ranks.get(&q.qid) else { continue };
+        n += 1;
+        let pq = query::parse(&q.text, w.now, &w.table);
+        let t = hybrid::query_texts(&pq, &cfg.params).semantic;
+        let r: Vec<String> = hybrid::search(&w.kw, &p_cards, &p_chunks, &pq, Some(&prod_q[&t]), &cfg.params, w.now, &w.meta_all, 100)
+            .expect("검색")
+            .iter()
+            .map(|h| name(h.id))
+            .collect();
+        if &r == ar {
+            same100 += 1;
+        } else if diff_i.len() < 3 {
+            diff_i.push(format!("- {} `{}`\n  - 앱: {}\n  - m0eval(제품 벡터): {}", q.qid, q.text, top(ar, 10).join(" "), top(&r, 10).join(" ")));
+        }
+    }
+    let structural_ok = n == queries.len() && same100 == n;
+
+    // (iii) 참고: m0eval 자체 벡터(검색어 하나씩 · 예전 묶음)로 낸 순위와 앱.
+    let e2e = |qvec: &HashMap<String, Vec<f32>>| {
+        let (mut same, mut da, mut dm, mut fa, mut fm) = (0usize, 0.0, 0.0, 0usize, 0usize);
+        for q in queries {
+            let Some(ar) = app_ranks.get(&q.qid) else { continue };
+            let mr = w.rank_with(&cfg, q, qvec);
+            same += (top(ar, 10) == top(&mr, 10)) as usize;
+            da += ndcg_at_k(ar, &q.relevant, 10);
+            dm += ndcg_at_k(&mr, &q.relevant, 10);
+            fa += app::evalset::first_page_hit(ar, &q.relevant) as usize;
+            fm += app::evalset::first_page_hit(&mr, &q.relevant) as usize;
+        }
+        let k = n.max(1) as f64;
+        (same, da / k, dm / k, fa, fm)
+    };
+    let (s1, na, nm1, fa, fm1) = e2e(&w.qvec);
+    let (sb, _, nmb, _, fmb) = e2e(&w.qvec_batched);
+
+    let pass = structural_ok && inputs_ok;
+    let ok = |b: bool| if b { "통과" } else { "실패" };
     let mut s = String::new();
-    writeln!(s, "# M2 일치 검사 (실험 = 제품, DEC-052)\n").unwrap();
+    writeln!(s, "# M2 일치 검사 (실험 = 제품, DEC-052 · DEC-059)\n").unwrap();
+    writeln!(s, "`kra-search --home target/eval-home eval --set eval/public --set eval/kra --set eval/data --dump target/app-ranks.json` 와 `m0eval --parity target/app-ranks.json` 의 결과. 매개변수는 제품 기본값(`HybridParams::default()` = `docs/m2/params.json`), 카드 상한 {}, 데이터 뒷부분 켬.\n", plan::CARD_TOKENS).unwrap();
+    writeln!(s, "## (i) 구조: 같은 벡터 → 같은 순위\n").unwrap();
+    writeln!(s, "m0eval 의 키워드 색인·날짜·제목 연도·문서 번호에 **제품이 저장한 카드·청크 벡터**(meta 의 살아 있는 슬롯)와 제품처럼 하나씩 임베딩한 검색어 벡터를 넣어 순위를 낸다.\n").unwrap();
     writeln!(s, "| 항목 | 값 | 기준 |\n|---|---|---|").unwrap();
     writeln!(s, "| 비교한 질의 | {n}/{} | 전부 |", queries.len()).unwrap();
-    writeln!(s, "| nDCG@10 앱 · m0eval | {na:.4} · {nm:.4} (차이 {:+.4}) | ≤ 0.002 |", na - nm).unwrap();
-    writeln!(s, "| 첫 페이지 적중 앱 · m0eval | {fa} · {fm} | (참고) |").unwrap();
-    writeln!(s, "| 상위 10개가 순서까지 같은 질의 | {same}/{n} ({:.1}%) | ≥ 98% |", frac * 100.0).unwrap();
-    writeln!(s, "| 판정 | **{}** | |", if pass { "통과" } else { "실패" }).unwrap();
-    if !diff_q.is_empty() {
-        writeln!(s, "\n상위 10개가 다른 질의: {}", diff_q.join(", ")).unwrap();
-        writeln!(s, "\n처음 다른 질의의 상위 10개:\n\n{}", diff_lists.join("\n")).unwrap();
+    writeln!(s, "| 상위 100개가 순서까지 같은 질의 | {same100}/{n} | 100% |").unwrap();
+    writeln!(s, "| 판정 | **{}** | |", ok(structural_ok)).unwrap();
+    if !diff_i.is_empty() {
+        writeln!(s, "\n처음 다른 질의:\n\n{}", diff_i.join("\n")).unwrap();
     }
+    writeln!(s, "\n## (ii) 입력: 같은 글 → 거의 같은 벡터\n").unwrap();
+    writeln!(s, "카드·청크는 문서 id + 위치(문서 안 슬롯 순서 = 우선순위 순서의 위치)로 짝짓고, m0eval 벡터를 제품과 같은 양자화(`Record::from_full`, int8 {}차원)에 통과시킨 뒤 **int8 코드끼리** 코사인을 잰다(역스케일은 코사인에 영향 없음). 검색어는 m0eval 의 하나씩 임베딩한 캐시 벡터와 제품식으로 지금 다시 임베딩한 벡터를 원본 차원(f32)으로 잰다. 글·렌더링(제목 머리·청크 경계·날짜 빼기)이 다르면 코사인이 훨씬 낮아진다.\n", LAYOUT.dim).unwrap();
+    writeln!(s, "| 대상 | 개수 | 최소 | 하위 1% | 중앙값 | {PARITY_COS} 미만 |\n|---|---|---|---|---|---|").unwrap();
+    for (label, st, miss) in &kinds {
+        writeln!(s, "{}", st.row(label, miss)).unwrap();
+    }
+    writeln!(s, "\n판정 **{}**\n", ok(inputs_ok)).unwrap();
+    writeln!(s, "## (iii) 참고: 각자 계산한 벡터로 끝까지(판정 안 함)\n").unwrap();
+    writeln!(s, "| m0eval 검색어 벡터 | nDCG@10 앱 · m0eval (차이) | 첫 페이지 적중 앱 · m0eval | 상위 10개가 순서까지 같은 질의 |\n|---|---|---|---|").unwrap();
+    let pct = |x: usize| x as f64 * 100.0 / n.max(1) as f64;
+    writeln!(s, "| 하나씩(제품과 같게, 지금 기본) | {na:.4} · {nm1:.4} ({:+.4}) | {fa} · {fm1} | {s1}/{n} ({:.1}%) |", na - nm1, pct(s1)).unwrap();
+    writeln!(s, "| 8개씩 묶음(eval-hybrid.md 를 만든 방식) | {na:.4} · {nmb:.4} ({:+.4}) | {fa} · {fmb} | {sb}/{n} ({:.1}%) |", na - nmb, pct(sb)).unwrap();
+    writeln!(s, "\nllama.cpp 의 임베딩은 같은 ubatch 에 함께 들어간 다른 입력에 따라 조금 달라진다(같은 글을 하나씩 vs 여러 개 묶어 넣으면 코사인 ≈0.9998; 스레드 수와는 무관하고, 묶음 구성이 같으면 비트까지 같다). m0eval 캐시는 빠진 항목만 그때그때 묶어 계산해 묶음 구성이 제품 색인과 다르므로, 각자 계산한 벡터로는 점수 차이가 1e-3 안팎 생기고 RRF 결합에서 아래 순위가 자주 뒤바뀐다. 그래서 순위 일치는 같은 벡터로만 판정하고(i), 벡터 자체는 코사인으로 확인한다(ii) — DEC-059. `docs/m2/eval-hybrid.md` 의 숫자는 8개씩 묶어 임베딩한 검색어 벡터로 계산했다(위 둘째 행이 그 방식의 앱 대비 차이, 첫째 행과의 차이가 묶음 잡음의 크기).\n").unwrap();
+    writeln!(s, "## 판정\n\n**{}** — (i) {} · (ii) {}", ok(pass), ok(structural_ok), ok(inputs_ok)).unwrap();
     (s, pass)
 }
 
@@ -916,6 +1095,16 @@ mod tests {
 
     fn hd(id: &str, set: &str, file: &str, date: Option<&str>) -> HDoc {
         HDoc { id: id.into(), set: set.into(), file: file.into(), ext: "hwp".into(), date: date.and_then(query::calendar::parse_ymd), doc: None }
+    }
+
+    /// 일치 검사(ii)의 짝짓기: 주인별 몇 번째 슬롯인가. 코사인은 크기와 무관.
+    #[test]
+    fn parity_pairs_slots_by_owner_and_position() {
+        let m = by_owner_pos([5i64, 3, 5, 5, 3].into_iter());
+        assert_eq!(m.into_iter().collect::<Vec<_>>(), vec![((3, 0), 1), ((3, 1), 4), ((5, 0), 0), ((5, 1), 2), ((5, 2), 3)]);
+        assert!((cos_i8(&[1, 2, 3], &[2, 4, 6]) - 1.0).abs() < 1e-12);
+        assert!(cos_i8(&[1, 0], &[0, 1]).abs() < 1e-12);
+        assert!((cos_f32(&[3.0, 4.0], &[6.0, 8.0]) - 1.0).abs() < 1e-12);
     }
 
     /// P2: 제품 수집 순서 — 수정 시각 최근 먼저, 같으면 "{세트}{구분자}{파일}" 오름차순, 날짜 없는 문서는 맨 뒤.
