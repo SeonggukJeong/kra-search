@@ -11,6 +11,8 @@ const EXTS: &[&str] = &[".hwp", ".hwpx", ".pdf", ".docx", ".pptx", ".xlsx", ".od
 
 /// 키워드형으로 보는 글자 수 상한(낱말 사이 공백 제외). 잠정값이다 — 사람마다 검색 습관이 달라
 /// M2 평가(Task 15·16)에서 "나누지 않음" 기준과 6·8·10자를 견줘 뚜렷이 나을 때만 유지한다.
+/// 제품 기본은 나누지 않음이다(DEC-058, `HybridParams.keyword_max_chars = 0` — 나누는 쪽이 이기지 못함).
+/// 8 은 `ParsedQuery.kind`(`parse`/`classify`)가 쓰는 값일 뿐이며 검색 점수의 가중치 칸은 매개변수가 정한다.
 pub const KEYWORD_MAX_CHARS: usize = 8;
 
 /// 문서번호 꼴: 글자들-숫자(예: 경마기획부-1736).

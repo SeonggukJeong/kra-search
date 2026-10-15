@@ -658,8 +658,7 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
     .unwrap();
     // 스펙 §1: "날짜 표현이 없는 질의는 떨어지지 않을 것" — 질의 유형이 아니라 날짜 칩이 있는지로 가른다.
     let has_chip = |q: &Query| query::parse(&q.text, w.now, &w.table).chips().next().is_some();
-    let (_, non_date_h) = split_by_chip(&hold, has_chip);
-    let (chip_h, _) = split_by_chip(&hold, has_chip);
+    let (chip_h, non_date_h) = split_by_chip(hold, has_chip);
     let (chip_all, non_date) = split_by_chip(&all, has_chip);
     let (nd_on, nd_off) = (macro_ndcg(&per[3], &non_date_h), macro_ndcg(&per[4], &non_date_h));
     // 허용 폭 0.003 은 숫자 규칙이다(P20) — 나중에 DEC 로 기록한다.
