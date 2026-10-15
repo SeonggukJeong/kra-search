@@ -2,29 +2,8 @@
 
 use std::collections::HashSet;
 
-pub fn ndcg_at_k(ranked: &[String], relevant: &HashSet<String>, k: usize) -> f64 {
-    let dcg: f64 = ranked
-        .iter()
-        .take(k)
-        .enumerate()
-        .filter(|(_, d)| relevant.contains(*d))
-        .map(|(i, _)| 1.0 / ((i + 2) as f64).log2())
-        .sum();
-    let idcg: f64 = (0..relevant.len().min(k)).map(|i| 1.0 / ((i + 2) as f64).log2()).sum();
-    if idcg == 0.0 { 0.0 } else { dcg / idcg }
-}
-
-pub fn recall_at_k(ranked: &[String], relevant: &HashSet<String>, k: usize) -> f64 {
-    if relevant.is_empty() {
-        return 0.0;
-    }
-    ranked.iter().take(k).filter(|d| relevant.contains(*d)).count() as f64 / relevant.len() as f64
-}
-
-/// 첫 정답 문서의 순위(1부터). 정답이 순위 목록에 없으면 None.
-pub fn first_relevant_rank(ranked: &[String], relevant: &HashSet<String>) -> Option<usize> {
-    ranked.iter().position(|d| relevant.contains(d)).map(|i| i + 1)
-}
+// 지표 구현은 한 곳(app::evalset) — 제품 `kra-search eval` 과 같은 함수.
+pub use app::evalset::{first_relevant_rank, ndcg_at_k, recall_at_k};
 
 /// 한 섹션(예: 우리 기관 문서)만 남겼을 때 첫 정답 순위. 출처별 섹션 화면을 흉내 낸다.
 pub fn section_rank(ranked: &[String], relevant: &HashSet<String>, in_section: impl Fn(&str) -> bool) -> Option<usize> {

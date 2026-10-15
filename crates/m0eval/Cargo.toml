@@ -6,6 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+app = { path = "../app" }
+query = { path = "../query" }
 doc = { path = "../doc" }
 embed = { path = "../embed" }
 extract = { path = "../extract" }
