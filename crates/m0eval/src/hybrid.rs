@@ -228,8 +228,9 @@ pub fn build(docs: &[EvalDoc], failed: &[FailedDoc], queries: &[Query], a: &HArg
     qtexts.sort();
     qtexts.dedup();
     // 검색어는 제품처럼 하나씩 임베딩한다 — llama.cpp 출력은 같은 묶음(ubatch)의 다른 입력에 따라 조금 달라진다(코사인 ≈0.9998,
-    // DEC-059). 묶어 계산한 옛 캐시("query")와 섞이지 않게 캐시 이름을 따로 둔다.
-    let qvec: HashMap<String, Vec<f32>> = cache
+    // DEC-059). 캐시는 글 해시로만 찾으므로(종류 이름은 옛 캐시 옮기기에만 쓰임) 묶어 계산한 옛 벡터와 섞이지 않게 폴더를 따로 둔다.
+    let mut cache1 = Cache::open(&Path::new("target/m0cache").join(format!("{name}-query1")));
+    let qvec: HashMap<String, Vec<f32>> = cache1
         .get_or_compute("query1", qtexts.clone(), |x| x.into_iter().map(|(k, t)| (k, m.embed(&[t]).expect("임베딩").pop().expect("벡터").vector)).collect())
         .into_iter()
         .collect();
@@ -1022,7 +1023,10 @@ pub fn parity(w: &World, queries: &[Query], a: &ParityArgs) -> (String, bool) {
         if &r == ar {
             same100 += 1;
         } else if diff_i.len() < 3 {
-            diff_i.push(format!("- {} `{}`\n  - 앱: {}\n  - m0eval(제품 벡터): {}", q.qid, q.text, top(ar, 10).join(" "), top(&r, 10).join(" ")));
+            // 처음 갈리는 위치부터 10개를 보인다(상위 10 이 같아도 100 안에서 갈릴 수 있음).
+            let k = ar.iter().zip(&r).position(|(x, y)| x != y).unwrap_or(ar.len().min(r.len()));
+            let from = |v: &[String]| v.iter().skip(k).take(10).cloned().collect::<Vec<_>>().join(" ");
+            diff_i.push(format!("- {} `{}` — {}위부터 다름(길이 앱 {} · m0eval {})\n  - 앱: {}\n  - m0eval(제품 벡터): {}", q.qid, q.text, k + 1, ar.len(), r.len(), from(ar), from(&r)));
         }
     }
     let structural_ok = n == queries.len() && same100 == n;
