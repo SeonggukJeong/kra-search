@@ -859,6 +859,8 @@ pub fn parity(w: &World, queries: &[Query], app_dump: &Path) -> (String, bool) {
     let (mut same, mut n, mut da, mut dm) = (0usize, 0usize, 0.0, 0.0);
     let (mut fa, mut fm) = (0usize, 0usize);
     let mut diff_q = Vec::new();
+    // 처음 몇 질의는 양쪽 상위 10개를 그대로 적는다 — 어긋남의 원인(날짜·카드·청크·검색어)을 좇는 출발점(Task 17 Step 7).
+    let mut diff_lists = Vec::new();
     for q in queries {
         let Some(a) = app.get(&q.qid) else { continue };
         let m = w.rank(&cfg, q);
@@ -868,6 +870,9 @@ pub fn parity(w: &World, queries: &[Query], app_dump: &Path) -> (String, bool) {
             same += 1;
         } else {
             diff_q.push(q.qid.clone());
+            if diff_lists.len() < 3 {
+                diff_lists.push(format!("- {} `{}`\n  - 앱: {}\n  - m0eval: {}", q.qid, q.text, top(a).join(" "), top(&m).join(" ")));
+            }
         }
         da += ndcg_at_k(a, &q.relevant, 10);
         dm += ndcg_at_k(&m, &q.relevant, 10);
@@ -887,6 +892,7 @@ pub fn parity(w: &World, queries: &[Query], app_dump: &Path) -> (String, bool) {
     writeln!(s, "| 판정 | **{}** | |", if pass { "통과" } else { "실패" }).unwrap();
     if !diff_q.is_empty() {
         writeln!(s, "\n상위 10개가 다른 질의: {}", diff_q.join(", ")).unwrap();
+        writeln!(s, "\n처음 다른 질의의 상위 10개:\n\n{}", diff_lists.join("\n")).unwrap();
     }
     (s, pass)
 }
