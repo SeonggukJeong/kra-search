@@ -43,6 +43,10 @@ fn semantic_and_fuse_p95_under_400ms_at_500k_chunks() {
         let sem = semantic(&cards, &chunks, &q, &p);
         let hits = fuse(&keyword, &sem, &pq, &p, today, &meta, &HashSet::new());
         ms.push(t.elapsed().as_secs_f64() * 1000.0);
+        // 의미 경로가 조용히 비어(빨리 끝나) 지연 기준을 통과하지 않게 — 한 번만 확인(재는 시간 밖)
+        if ms.len() == 1 {
+            assert!(!sem.cards.is_empty() && !sem.chunks.is_empty(), "의미 검색 결과가 비었다(카드 {} · 청크 {})", sem.cards.len(), sem.chunks.len());
+        }
         checksum += hits.len();
     }
     ms.sort_by(f64::total_cmp);

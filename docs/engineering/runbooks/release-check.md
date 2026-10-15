@@ -1,0 +1,46 @@
+# 폐쇄망 품질 확인 릴리즈(kra-search 명령줄)
+
+M2 완료 조건의 폐쇄망 확인(M2 설계 §7). 사용자가 반입해 업무 폴더를 색인하고 자기 질의로 `eval --queries` 를 돌려 보고서 하나를 반출한다. **잘못된 릴리즈는 사용자의 하루를 버리게 한다**(INC-006·009 와 같은 원칙).
+
+## 태그 전 점검(INC-020)
+이 결과로 정할 것과 그 숫자가 보고서에 있는지 확인한다. 개발 PC 에서 시험 자료로 보고서를 직접 만들어 본다(`docs/check/질의-예시.tsv` 의 정답은 개발 PC 에 없는 파일이라 "찾지 못한 질의"만 나온다 — 대신 릴리즈 스모크와 같은 질의를 쓴다):
+
+```bash
+# 개발 PC 는 실행 파일 옆에 모델·pdfium 이 없다 — 직접 준다(mac-arm64 예, 다른 OS 는 third_party/pdfium/<os>/)
+K=(--home /tmp/kra-check --model models/embeddinggemma-2-Q8_0.gguf --pdfium third_party/pdfium/mac-arm64/lib/libpdfium.dylib)
+cargo run -p app --release -- "${K[@]}" index --root crates/extract/tests/fixtures
+printf '질의\t정답\n렛츠런파크 운영 방안\tsample.docx\n작년 경마 시행 계획\toffice\\utf8.txt\n말 경주 시설 운영\tkorean.pdf\n' > /tmp/kra-check-q.tsv
+cargo run -p app --release -- "${K[@]}" eval --queries /tmp/kra-check-q.tsv --out /tmp/kra-check-report.txt
+```
+(`--out` 이 없으면 지금 폴더의 `kra-search-eval-report.txt` 에 쓰고, 어느 쪽이든 화면에도 같은 보고서가 나온다. `--set` 과 달리 `--queries` 는 색인을 읽기만 해 기본 색인 위치 거절이 없다.)
+
+| 정할 것 | 보고서의 줄(`crates/app/src/eval.rs` `user_report`) |
+|---|---|
+| 개발 PC 매개변수를 실제 문서에서 다시 정할지 | `[요약]` 의 `nDCG@10 … · Recall@20 …`, `첫 페이지(10위 안)에 정답 a/b · 그중 1위 c`, `첫 페이지 밖 질의(줄): …` / `[검색어 유형 나누기 비교]` 의 `나누지 않음(제품): nDCG@10 … · 첫 페이지 a/b` 와 `8글자 이하를 키워드형으로 나눔: nDCG@10 … · 첫 페이지 a/b` / `[질의별]` 의 질의마다 순위(켬·끔·8글자 나눔) |
+| 날짜 가산이 실제 수정일에서도 이득인지(KI-049) | `[날짜 가산 켬/끔]` 의 `날짜 표현 있는 질의 n개: nDCG@10 켬 · 끔 (승 무 패) · Recall@20 켬 · 끔 · 첫 페이지 켬 · 끔`, `날짜 표현 없는 질의 n개: …`(같은 항목), `전체: 첫 페이지 켬 a/b · 끔 a/b`, `가산 때문에 첫 페이지 밖으로 밀린 질의(줄)`, `가산 덕에 첫 페이지로 들어온 질의(줄)`. 날짜가 "내용 기간"인 질의의 줄 번호는 사용자가 따로 알려 준다(안내문 3단계 — 보고서는 두 뜻을 가르지 못한다) |
+| 실제 색인 시간(카드 30분 기준 KI-041, 본문) | `[색인]` 의 `파일 · 내용 · 내용을 못 읽은 것`, `청크 수 n (의미 검색에 넣은 것 m)`, `빠른 의미 검색 a/b · 정밀 의미 검색 a/b · 데이터 파일 뒷부분 a/b`, `마지막 index 실행: 새로 읽음 n개 · 빠른 의미 검색 n개 · 정밀 의미 검색 n개 · 처음부터 색인 여부`, `걸린 시간: 키워드 검색 색인 …초 · 빠른 의미 검색 …초 · 정밀 의미 검색 …초 · 색인 스레드 n`, `처리 속도: 빠른 의미 검색 …개/초 · 정밀 의미 검색(청크) …개/초` |
+| 스레드 정책(DEC-050) | `[PC]` 의 `성능 코어 · 효율 코어 · 논리 코어 · 의미 검색 스레드`(Windows 만 성능·효율 코어를 안다) + 위 `색인 스레드` |
+| 검색 지연 §13 | `[속도]` 의 `검색 p50 …ms · p95 …ms … · 모델 불러오기 …ms` |
+| 보고서가 어느 릴리즈·설정인지 | 머리의 `프로그램 <버전> · 검색 설정 <지문 8자리>`, `읽지 못한 질의 파일 줄`, `정답 이름이 여러 파일과 맞은 질의(줄)`·`정답 일부만 찾은 질의(줄)` |
+
+색인 시간 기록은 **마지막 `index` 실행 한 번**의 것이다(kv `stat_*` 를 실행마다 덮어씀). 사용자가 중간에 끄고 이어서 했으면 `처음부터 색인 여부: 아니오` 와 그 실행의 개수·초만 남는다 — 안내문이 그 사실과 대략의 시간을 따로 알려 달라고 하고, 색인 뒤 평가 전에 `index` 를 다시 치지 말라고 한다.
+
+다음 마일스톤 계획이 이 보고서에서 읽을 숫자가 늘면 이 표와 `user_report` 를 같이 고치고 태그한다.
+
+## 절차
+1. 브랜치 CI(macOS·Windows·deny)가 통과했는지 확인. Windows 잡의 실모델 단계에 `app --test semantic`(패키지 전 명령줄 색인 → 의미 검색)과 `index --test bench_hybrid`(청크 50만 검색 코어 p95) 가 들어 있다.
+2. `git tag m2-check-N && git push origin m2-check-N` → `.github/workflows/release-check.yml` 이 Windows 에서 네트워크 0 검사(`tools/check-no-net.sh`)·빌드·패키지·스모크·프리릴리즈.
+   - zip: `kra-search.exe`, llama/ggml DLL 전부, VC++ 런타임 3개(INC-005), `models/embeddinggemma-2-Q8_0.gguf`, `pdfium.dll`, `licenses/pdfium/`, `README-check.txt`(원본 `docs/check/README-check.txt`), `질의-예시.tsv`.
+3. 스모크 확인(패키지 폴더에서 인자 없이 — 모델·DLL·pdfium 은 실행 파일 옆): 워크플로 로그에서
+   - `의미 검색: 빠른 …개`(모델·DLL 을 불러와 의미 검색 색인을 만들었다),
+   - 검색 결과의 `korean.pdf`(pdfium)·`뜻이 비슷함`(의미 경로),
+   - `eval --queries` 를 `--out` 없이 돌려 `kra-search-eval-report.txt` 가 생기고 `찾지 못한 질의 0개`(폴더 붙인 정답 `office\utf8.txt` 포함)·`날짜 표현 있는 질의 1개`,
+   - 보고서(파일·화면)에 검색어 낱말·파일 이름·폴더 이름·경로가 없음 — 모두 스텝이 실패로 끝낸다.
+   - 로그의 보고서 `[색인] 처리 속도` 를 이전 릴리즈와 비교해 크게 느리면(수 배) 최적화 빠짐을 의심한다(INC-006).
+4. 사용자에게 전달: 릴리즈 링크, zip SHA-256, `README-check.txt` 요약(색인 → 질의 20~30줄(날짜가 "쓴 때"·"내용 기간" 둘 다, 같은 이름 파일은 폴더 붙이기) → `eval --queries` → 보고서 하나 반출 + 내용 기간 질의 줄 번호, 이어서 색인했으면 그 사실).
+5. 결과는 `docs/m2/results.md` "폐쇄망 확인" 절에 기록하고(보고서 원본은 `eval/downloads/m2-check-N/`, 커밋하지 않음), 개발 PC 결과와 크게 다르면 매개변수를 다시 정할지 사용자와 정한다.
+6. 불량 릴리즈는 지우지 말고 릴리즈 노트 맨 위에 "사용 금지 — 이유, 대체 릴리즈"(DEC-019).
+
+## 릴리즈 이력
+| 태그 | 상태 | 비고 |
+|---|---|---|
