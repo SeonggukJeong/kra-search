@@ -35,6 +35,7 @@ pub struct HybridParams {
     pub date_exact: f64,
     pub date_vague: f64,
     /// 문서 제목이 칩과 겹치지 않는 해를 적었을 때, 파일 날짜가 칩 안이어도 주는 가산 비율(0 = 제목이 이김).
+    /// 1년 이상 기간 칩(작년·올해·2025년·지난 2년)에만 적용한다 — 제목 연도는 문서가 다룬 해이지 쓴 주·달이 아니다.
     /// 2026-10-15 사용자 요구: 올해(2026) "작년 경마시행계획" 에는 2026-12 에 쓴 2026년 계획이 아니라 2025년 계획이 떠야 한다.
     pub date_title_conflict: f64,
     /// 연도 없는 되풀이 시기(연말·9월 말·3분기)의 지난 해 같은 시기에 주는 가산 비율(0 = 가장 최근 시기만).
@@ -111,7 +112,7 @@ pub trait DocMeta {
     fn date(&self, id: i64) -> Option<Day>;
     /// 본문 청크가 하나라도 있는가(ChunkElseCard 에서 카드로 대신할지)
     fn has_chunks(&self, id: i64) -> bool;
-    /// 문서 제목·파일명에 적힌 해(`query::title_years` 로 부르는 쪽이 채운다). 없으면 빈 목록.
+    /// 문서 제목·파일명에 적힌 해(`query::title_years` 로 부르는 쪽이 채운다). 없으면 빈 목록. 1년 이상 기간 칩에서만 쓰인다.
     fn title_years(&self, id: i64) -> Vec<i32>;
 }
 
@@ -207,12 +208,13 @@ fn file_value(r: Range, w: f64, file: Option<Day>) -> f64 {
 }
 
 /// 날짜 칩 하나에 대한 가산 비율(1위 RRF 기여의 배수).
-/// - 연도가 분명한 칩: 제목에 해가 있으면 제목이 이긴다(겹치면 w, 아니면 파일 날짜 × `date_title_conflict`). 제목 해가 없으면 파일 날짜.
+/// - 연도가 분명한 1년 이상 칩: 제목에 해가 있으면 제목이 이긴다(겹치면 w, 아니면 파일 날짜 × `date_title_conflict`). 제목 해가 없거나 1년 미만 칩이면 파일 날짜.
 /// - 연도 없는 되풀이 칩: 제목 연도는 무시하고 파일 날짜. 0 이고 기간이 1년 미만이면 지난 해 같은 시기(최대 10년 전)를 `date_recurring` 만큼.
 fn chip_value(yearless: bool, r: Range, w: f64, file: Option<Day>, titles: &[i32], p: &HybridParams) -> f64 {
     let file_v = file_value(r, w, file);
     if !yearless {
-        if titles.is_empty() {
+        // 제목 연도는 문서가 다룬 해를 말할 뿐 쓴 주·달이 아니다 → 1년 미만 칩(지난주·2025년 9월·작년 연말)은 파일 날짜만.
+        if titles.is_empty() || r.days() < 365 {
             return file_v;
         }
         let title_v = if titles.iter().any(|y| from_ymd(*y, 1, 1) <= r.end && from_ymd(*y, 12, 31) >= r.start) { w } else { 0.0 };
@@ -361,7 +363,6 @@ mod tests {
     use crate::tokenize::Analyzers;
     use query::calendar::parse_ymd;
     use query::{parse, DateTable};
-    use crate::keyword::KeywordWeights;
 
     fn today() -> Day {
         parse_ymd("2026-10-15").unwrap()
@@ -552,7 +553,7 @@ mod tests {
                 k2.push(owner, &r2);
             }
         }
-        let p = pinned();
+        let p = HybridParams::default();
         let q = pq("작년 출장 계획");
         let m = meta(&[(3, "2025-03-01")], &[0, 1, 2, 3]);
         let h1 = search(&kw, &c1, &k1, &q, Some(&vs[5]), &p, today(), &m, 10).unwrap();
@@ -632,6 +633,45 @@ mod tests {
         let prev = query::calendar::from_ymd(y - 1, mo, d);
         let m = MapMeta { dates: [(1, prev)].into_iter().collect(), chunked: HashSet::new(), title_years: HashMap::new() };
         let p = HybridParams { date_exact: 2.0, date_vague: 2.0, date_recurring: 1.0, date_title_conflict: 1.0, ..pinned() };
+        let h = fuse(&[(1, 1.0)], &Semantic::default(), &q, &p, today(), &m, &none());
+        assert_eq!(boost_of(&h, 1), 0.0);
+    }
+
+    #[test]
+    fn title_years_ignored_for_sub_year_chips() {
+        let q = pq("지난주 회의");
+        let m = meta_t(&[(1, Some("2026-03-02"), &[2026]), (2, Some("2026-10-07"), &[2025])]);
+        let p = HybridParams { rrf_k: 10.0, date_exact: 2.0, date_title_conflict: 0.0, date_recurring: 0.0, ..pinned() };
+        let h = fuse(&[(1, 1.0), (2, 1.0)], &Semantic::default(), &q, &p, today(), &m, &none());
+        assert_eq!(boost_of(&h, 1), 0.0, "제목이 올해여도 지난주 문서가 아니다");
+        assert!((boost_of(&h, 2) - 2.0 / 11.0).abs() < 1e-12, "제목이 작년이어도 지난주에 쓴 문서");
+    }
+
+    #[test]
+    fn multiple_chips_take_the_max() {
+        let q = pq("작년 회의 지난주 보고");
+        assert_eq!(q.chips().count(), 2);
+        let m = meta_t(&[(1, Some("2025-06-01"), &[]), (2, Some("2026-10-07"), &[])]);
+        let p = HybridParams { rrf_k: 10.0, date_exact: 2.0, ..pinned() };
+        let h = fuse(&[(1, 1.0), (2, 1.0)], &Semantic::default(), &q, &p, today(), &m, &none());
+        assert!((boost_of(&h, 1) - 2.0 / 11.0).abs() < 1e-12);
+        assert!((boost_of(&h, 2) - 2.0 / 11.0).abs() < 1e-12, "합이 아니라 최댓값");
+    }
+
+    #[test]
+    fn shift_years_clamps_feb_29() {
+        use query::calendar::from_ymd;
+        assert_eq!(shift_years(from_ymd(2024, 2, 29), 1), from_ymd(2025, 2, 28));
+        assert_eq!(shift_years(from_ymd(2024, 2, 29), -4), from_ymd(2020, 2, 29));
+        assert_eq!(shift_years(from_ymd(2026, 12, 31), -2), from_ymd(2024, 12, 31));
+    }
+
+    #[test]
+    fn shifted_ranges_have_no_half_margin() {
+        // 연말(2025-12) 의 한 해 앞(2024-12) 끝에서 3일 지난 날: 여유 안이어도 되풀이 가산은 없다.
+        let q = pq("연말에 나온 경마시행계획");
+        let m = meta_t(&[(1, Some("2025-01-03"), &[])]);
+        let p = HybridParams { date_exact: 2.0, date_recurring: 1.0, date_title_conflict: 1.0, ..pinned() };
         let h = fuse(&[(1, 1.0)], &Semantic::default(), &q, &p, today(), &m, &none());
         assert_eq!(boost_of(&h, 1), 0.0);
     }
