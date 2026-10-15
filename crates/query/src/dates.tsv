@@ -1,0 +1,82 @@
+# 날짜 표현 표(DEC-053). 형식: 표현<TAB>종류<TAB>값<TAB>정밀도(exact|vague). 표현 안의 공백은 무시하고 맞춘다("지난 달" = "지난달").
+# 종류: year(해 오프셋) · year_bound(올 — 뒤에 시기가 붙을 때만) · month_rel · week_rel(월요일 시작) · day_rel · quarter_rel · quarter(n)
+#       half(1|2) · year_part(early|mid|late|whole|turn) · season(spring|summer|autumn|winter)
+#       month_part(early|mid|late — 달·해 바로 뒤에서만) · this_month_part(early|late) · window(며칠 전부터,며칠 전까지) · future(칩 아님)
+# 넣지 않은 낱말(일상어와 겹침): 전달(전하다)·전주(지명)·전일(온종일)·당일(그날). 바깥 파일로 같은 형식의 줄을 덧붙일 수 있다.
+# "지난 봄·여름·가을·겨울"(가장 최근에 끝난 계절)은 표로 표현할 수 없어 코드(dates.rs numeric)에서 읽는다.
+올해	year	0	exact
+금년	year	0	exact
+금년도	year	0	exact
+당해	year	0	exact
+당해연도	year	0	exact
+당해년도	year	0	exact
+작년	year	-1	exact
+지난해	year	-1	exact
+전년	year	-1	exact
+전년도	year	-1	exact
+객년	year	-1	exact
+재작년	year	-2	exact
+지지난해	year	-2	exact
+올	year_bound	0	exact
+이번 달	month_rel	0	exact
+이달	month_rel	0	exact
+금월	month_rel	0	exact
+당월	month_rel	0	exact
+지난달	month_rel	-1	exact
+저번 달	month_rel	-1	exact
+전월	month_rel	-1	exact
+지지난달	month_rel	-2	exact
+이번 주	week_rel	0	exact
+금주	week_rel	0	exact
+지난주	week_rel	-1	exact
+저번 주	week_rel	-1	exact
+지지난주	week_rel	-2	exact
+오늘	day_rel	0	exact
+금일	day_rel	0	exact
+어제	day_rel	-1	exact
+어저께	day_rel	-1	exact
+그제	day_rel	-2	exact
+그저께	day_rel	-2	exact
+엊그제	day_rel	-2	vague
+이번 분기	quarter_rel	0	exact
+지난 분기	quarter_rel	-1	exact
+전분기	quarter_rel	-1	exact
+일사분기	quarter	1	exact
+이사분기	quarter	2	exact
+삼사분기	quarter	3	exact
+사사분기	quarter	4	exact
+상반기	half	1	exact
+전반기	half	1	exact
+하반기	half	2	exact
+후반기	half	2	exact
+연초	year_part	early	exact
+연말	year_part	late	exact
+연중	year_part	whole	vague
+연말연시	year_part	turn	exact
+초	month_part	early	exact
+상순	month_part	early	exact
+중순	month_part	mid	exact
+말	month_part	late	exact
+하순	month_part	late	exact
+월초	this_month_part	early	exact
+월말	this_month_part	late	exact
+봄	season	spring	vague
+여름	season	summer	vague
+가을	season	autumn	vague
+겨울	season	winter	vague
+최근	window	90,0	vague
+요즘	window	90,0	vague
+요새	window	90,0	vague
+근래	window	180,0	vague
+얼마 전	window	60,7	vague
+몇 달 전	window	180,45	vague
+몇 년 전	window	1825,365	vague
+내년	future	0	exact
+명년	future	0	exact
+익년	future	0	exact
+차년도	future	0	exact
+다음 달	future	0	exact
+내달	future	0	exact
+다음 주	future	0	exact
+내일	future	0	exact
+모레	future	0	exact
