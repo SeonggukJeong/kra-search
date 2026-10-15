@@ -170,7 +170,14 @@ fn index_semantic(cli: &Cli, home: &Home, store: &mut Store, data_tail: Option<&
         }
     };
     // 처음부터 색인인가: 이 실행을 시작할 때 파일도 벡터도 없었다(stat_full 은 키워드 단계가 "파일이 없었는가"로 먼저 적어 둔다).
-    let ec = store.meta.embed_counts(embed::plan::DATA_HEAD)?;
+    // 손상된 쪽을 읽으면 SQLite 가 엉뚱한 오류("out of memory")를 낸다 — 먼저 손상인지 확인해 `MetaCorrupt` 로 돌려준다(다시 만들기).
+    let ec = match store.meta.embed_counts(embed::plan::DATA_HEAD) {
+        Ok(c) => c,
+        Err(e) => {
+            store.meta.check()?;
+            return Err(e.into());
+        }
+    };
     let vectors_empty = ec.cards_done == 0 && ec.main_done == 0 && ec.tail_done == 0;
     let files_were_empty = store.meta.kv("stat_full")?.as_deref() == Some("1");
     store.meta.set_kv("stat_full", if files_were_empty && vectors_empty { "1" } else { "0" })?;
@@ -205,7 +212,9 @@ fn index_command(cli: &Cli, home: &Home, analyzers: &Analyzers, pdfium: Option<P
     let mut rebuilt = false;
     loop {
         let t = Instant::now();
-        let files_were_empty = store.meta.counts().is_ok_and(|c| c.files == 0);
+        // 처음부터 색인인가: 이전 실행 기록(stat_keyword_secs)이 없다 — 새로 만들었거나 손상으로 다시 만든 색인. (색인 전에 `counts()` 를 부르면
+        // 손상 쪽 오류 분류가 어긋난다 — any_corrupt_meta_page_is_rebuilt.)
+        let files_were_empty = store.meta.kv("stat_keyword_secs").is_ok_and(|v| v.is_none());
         let r = index_once(&mut store, &mut worker, &mut roots, timeout, pdf_reader).and_then(|s| {
             println!("{}", summary_line(&s));
             store.meta.set_kv("stat_keyword_secs", &format!("{:.1}", t.elapsed().as_secs_f64()))?;
