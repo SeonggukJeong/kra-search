@@ -57,7 +57,7 @@ pub struct World {
     meta_all: MapMeta,
     /// 검색어 벡터 — 제품 `Searcher` 처럼 하나씩 임베딩(DEC-059). 캐시 이름 "query1".
     qvec: HashMap<String, Vec<f32>>,
-    /// 예전처럼 8개씩 묶어 임베딩한 검색어 벡터(캐시 "query") — eval-hybrid.md 의 숫자가 이것으로 계산됨. 일치 검사 (iii) 참고용.
+    /// 예전처럼 8개씩 묶어 임베딩한 검색어 벡터(캐시 "query") — 일치 검사 (iii) 참고용(묶음 잡음의 크기). eval-hybrid.md 는 1bf76fe 부터 `qvec` 로 만든다.
     qvec_batched: HashMap<String, Vec<f32>>,
     /// 문서별 자르기 전 카드 토큰 수(결정 #27 판정)
     card_tokens: Vec<usize>,
@@ -1074,8 +1074,8 @@ pub fn parity(w: &World, queries: &[Query], a: &ParityArgs) -> (String, bool) {
     writeln!(s, "| m0eval 검색어 벡터 | nDCG@10 앱 · m0eval (차이) | 첫 페이지 적중 앱 · m0eval | 상위 10개가 순서까지 같은 질의 |\n|---|---|---|---|").unwrap();
     let pct = |x: usize| x as f64 * 100.0 / n.max(1) as f64;
     writeln!(s, "| 하나씩(제품과 같게, 지금 기본) | {na:.4} · {nm1:.4} ({:+.4}) | {fa} · {fm1} | {s1}/{n} ({:.1}%) |", na - nm1, pct(s1)).unwrap();
-    writeln!(s, "| 8개씩 묶음(eval-hybrid.md 를 만든 방식) | {na:.4} · {nmb:.4} ({:+.4}) | {fa} · {fmb} | {sb}/{n} ({:.1}%) |", na - nmb, pct(sb)).unwrap();
-    writeln!(s, "\nllama.cpp 의 임베딩은 같은 ubatch 에 함께 들어간 다른 입력에 따라 조금 달라진다(같은 글을 하나씩 vs 여러 개 묶어 넣으면 코사인 ≈0.9998; 스레드 수와는 무관하고, 묶음 구성이 같으면 비트까지 같다). m0eval 캐시는 빠진 항목만 그때그때 묶어 계산해 묶음 구성이 제품 색인과 다르므로, 각자 계산한 벡터로는 점수 차이가 1e-3 안팎 생기고 RRF 결합에서 아래 순위가 자주 뒤바뀐다. 그래서 순위 일치는 같은 벡터로만 판정하고(i), 벡터 자체는 코사인으로 확인한다(ii) — DEC-059. `docs/m2/eval-hybrid.md` 의 숫자는 8개씩 묶어 임베딩한 검색어 벡터로 계산했다(위 둘째 행이 그 방식의 앱 대비 차이, 첫째 행과의 차이가 묶음 잡음의 크기).\n").unwrap();
+    writeln!(s, "| 8개씩 묶음(예전 방식, 참고) | {na:.4} · {nmb:.4} ({:+.4}) | {fa} · {fmb} | {sb}/{n} ({:.1}%) |", na - nmb, pct(sb)).unwrap();
+    writeln!(s, "\nllama.cpp 의 임베딩은 같은 ubatch 에 함께 들어간 다른 입력에 따라 조금 달라진다(같은 글을 하나씩 vs 여러 개 묶어 넣으면 코사인 ≈0.9998; 스레드 수와는 무관하고, 묶음 구성이 같으면 비트까지 같다). m0eval 캐시는 빠진 항목만 그때그때 묶어 계산해 묶음 구성이 제품 색인과 다르므로, 각자 계산한 벡터로는 점수 차이가 1e-3 안팎 생기고 RRF 결합에서 아래 순위가 자주 뒤바뀐다. 그래서 순위 일치는 같은 벡터로만 판정하고(i), 벡터 자체는 코사인으로 확인한다(ii) — DEC-059. `docs/m2/eval-hybrid.md` 의 숫자는 첫째 행과 같이 하나씩 임베딩한 검색어 벡터로 계산한다. 둘째 행(예전처럼 8개씩 묶은 검색어 벡터)과 첫째 행의 차이가 검색어 묶음 잡음의 크기다.\n").unwrap();
     writeln!(s, "## 판정\n\n**{}** — (i) {} · (ii) {}", ok(pass), ok(structural_ok), ok(inputs_ok)).unwrap();
     (s, pass)
 }
