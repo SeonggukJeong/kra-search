@@ -63,6 +63,19 @@ pub struct HybridHit {
     pub why: hybrid::Hit,
 }
 
+/// 검색기를 여는 데 든 시간(밀리초) — 평가 보고서가 따로 적는다(KI-042·048 판단: 벡터 읽기와 모델 불러오기는 고칠 곳이 다르다).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct OpenTimes {
+    /// meta(수정일·청크 여부·제목) 읽기 + 벡터 파일 읽기
+    pub index_ms: f64,
+    /// 모델 지문 확인 + 모델 불러오기
+    pub model_ms: f64,
+}
+
+fn ms_since(t: std::time::Instant) -> f64 {
+    t.elapsed().as_secs_f64() * 1000.0
+}
+
 pub struct Searcher {
     sets: Sets,
     docs: MapMeta,
@@ -72,6 +85,7 @@ pub struct Searcher {
     pub params: HybridParams,
     /// 사용자에게 알릴 한 줄(의미 검색을 못 쓰는 이유)
     pub notice: Option<String>,
+    pub open_times: OpenTimes,
 }
 
 impl Searcher {
@@ -84,6 +98,7 @@ impl Searcher {
             }
             return Ok(s);
         };
+        let t = std::time::Instant::now();
         let cached = store.meta.kv(model::MODEL_HASH_KV).map_err(user_error)?;
         // 색인과 같은 계산(model::fingerprint_of)을 쓴다 — 따로 계산하면 지문이 어긋난다.
         let fp = match model::fingerprint_of(path, cached.as_deref()) {
@@ -95,8 +110,12 @@ impl Searcher {
                 return Ok(s);
             }
         };
+        let mut times = OpenTimes { model_ms: ms_since(t), ..OpenTimes::default() };
         // 벡터가 있을 때만 모델을 불러온다(검색어 임베딩 — 1초 안팎).
+        let t = std::time::Instant::now();
         let probe = vectors::load_sets(home, &store.meta, Some(&fp))?;
+        times.index_ms += ms_since(t);
+        let t = std::time::Instant::now();
         let embedder: Option<Box<dyn Embed>> = if probe.state == SetsState::Ready {
             match Embedder::load(path, &EngineOptions { threads, max_tokens: 1024, backend_dir: model::exe_dir() }) {
                 Ok(m) => Some(Box::new(m)),
@@ -109,7 +128,12 @@ impl Searcher {
         } else {
             None
         };
-        Self::from_sets(store, probe, embedder)
+        times.model_ms += ms_since(t);
+        let t = std::time::Instant::now();
+        let mut s = Self::from_sets(store, probe, embedder)?;
+        times.index_ms += ms_since(t);
+        s.open_times = times;
+        Ok(s)
     }
 
     /// 시험·평가: 임베더와 "지금 지문"을 직접 준다.
@@ -146,6 +170,7 @@ impl Searcher {
             table: DateTable::builtin(),
             params: HybridParams::default(),
             notice,
+            open_times: OpenTimes::default(),
         })
     }
 

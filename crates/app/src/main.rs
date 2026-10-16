@@ -368,10 +368,8 @@ fn run(cli: Cli) -> Result<(), String> {
                     return Err("질의가 없습니다 — 한 줄에 `질의<탭>정답 파일 이름`".into());
                 }
                 let threads = cli.threads.unwrap_or_else(platform::cpu::default_embed_threads);
-                let t = Instant::now();
                 // --set 과 같은 확인: 모델을 불러오지 못한 채 키워드 숫자를 하이브리드로 내지 않는다.
                 let mut s = eval_searcher(&cli, &home, &store, *keyword_only)?;
-                let model_ms = t.elapsed().as_secs_f64() * 1000.0;
                 let rs = app::eval::run_user_queries(&store, &mut s, &qs, today(&cli.now)?)?;
                 let me = |e: index::meta::MetaError| IndexError::from(e).to_string();
                 let c = store.meta.counts().map_err(me)?;
@@ -387,7 +385,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 // 설정 지문: 직렬화한 검색 설정의 xxh3 앞 8자리(사용자 내용 없음).
                 let params_id = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(serde_json::to_string(&s.params).expect("json").as_bytes()))[..8].to_string();
                 let run = app::eval::RunInfo { version: env!("CARGO_PKG_VERSION").to_string(), params_id, skipped_lines };
-                let report = app::eval::user_report(&rs, &ix, &pc, &run, model_ms);
+                let report = app::eval::user_report(&rs, &ix, &pc, &run, s.open_times);
                 // 화면에 먼저 — 파일을 못 써도 이 실행의 결과는 남는다.
                 println!("{report}");
                 let path = out.clone().unwrap_or_else(|| PathBuf::from("kra-search-eval-report.txt"));
