@@ -1223,6 +1223,17 @@ mod tests {
         assert_eq!(old.card_tokens, None);
     }
 
+    /// 최종 리뷰 m-10: params.json 의 카드 상한은 제품 상수 `embed::plan::CARD_TOKENS` 와 같아야 한다 — 다시 조정해 card_tokens 가
+    /// 바뀌면 제품 상수도 같이 바꾸게(index 는 embed 에 기대지 않아 둘 다 보이는 여기서 확인. 매개변수 쪽은 index 의
+    /// `default_params_equal_saved_params_json`).
+    #[test]
+    fn saved_card_cap_equals_product_constant() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/m2/params.json")).expect("docs/m2/params.json");
+        let saved: Saved = serde_json::from_str(&text).expect("params JSON");
+        assert_eq!(saved.card_tokens, Some(plan::CARD_TOKENS));
+        assert_eq!(saved.params, HybridParams::default());
+    }
+
     #[test]
     fn kind_truth_follows_spec() {
         assert_eq!(kind_truth("keyword"), QueryKind::Keyword);
