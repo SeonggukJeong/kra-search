@@ -262,7 +262,33 @@ pub fn title_years(text: &str) -> Vec<i32> {
 
 /// 날짜 표현 바로 뒤(공백 무시)에 오면 그 표현을 날짜로 읽지 않는 견줌 낱말(DEC-070). "전년 대비 매출"·"전월比"·"2025년 대비 실적"은
 /// 견줌의 기준이지 문서를 쓴 때가 아니다 — 표의 낱말과 숫자 꼴 모두에 같게 적용한다(표에 무엇을 더해도).
-const COMPARE_AFTER: &[&str] = &["대비", "比", "비교"];
+const COMPARE_AFTER: &[&str] = &["대비", "比", "비교", "비해"];
+
+/// 견줌 낱말 앞에 올 수 있는 "같은 때"를 뜻하는 말(DEC-070): "전년 동기 대비"·"전년 같은 기간 대비".
+const COMPARE_SAME_PERIOD: &[&str] = &["같은 기간", "같은기간", "동기", "동월", "동분기"];
+
+/// 견줌 낱말 뒤에 붙어도 낱말이 끝난 것으로 보는 꼴(하여·해·한·는·로 …). "대비책"·"비교적"은 여기에 없어 견줌이 아니다.
+const COMPARE_ENDINGS: &[&str] = &["하여", "하는", "해", "한", "는", "로"];
+
+/// 날짜 표현 바로 뒤 글(`after`, 앞 공백은 무시)이 견줌 맥락인가(DEC-070): [동기·같은 기간 …] → [에·과·와] → 대비·比·비교·비해,
+/// 사이의 공백은 있어도 없어도 된다. 견줌 낱말은 통째여야 한다 — 뒤가 끝·공백·구두점이거나 `COMPARE_ENDINGS` 로 시작해야 하고,
+/// 그래서 "올해 대비책 마련"·"올해 비교적 많은"은 견줌이 아니다(날짜는 칩으로 남는다).
+fn comparison_after(after: &str) -> bool {
+    let mut r = after.trim_start();
+    if let Some(w) = COMPARE_SAME_PERIOD.iter().find(|w| r.starts_with(**w)) {
+        r = r[w.len()..].trim_start();
+    }
+    if let Some(c) = r.chars().next().filter(|c| matches!(c, '에' | '과' | '와')) {
+        r = r[c.len_utf8()..].trim_start();
+    }
+    COMPARE_AFTER.iter().any(|w| {
+        r.strip_prefix(w).is_some_and(|t| {
+            *w == "比" // 한자 한 글자 — 뒤에 글이 바로 붙어도 견줌(전년比증가)
+                || t.chars().next().is_none_or(|c| !c.is_alphanumeric())
+                || COMPARE_ENDINGS.iter().any(|e| t.starts_with(e))
+        })
+    })
+}
 
 /// 바로 뒤에 붙으면 날짜가 아닌 (표현, 뒤 글자) — "이달의 우수 직원"(상 이름, DEC-070).
 const NOT_DATE_BEFORE: &[(&str, &str)] = &[("이달", "의")];
@@ -270,8 +296,7 @@ const NOT_DATE_BEFORE: &[(&str, &str)] = &[("이달", "의")];
 /// 칩으로 만들지 않을 맥락인가(DEC-070). 빠진 표현은 검색어에 그대로 남는다.
 fn idiom_context(q: &str, s: &DateSpan) -> bool {
     let rest = &q[s.end..];
-    let after = rest.trim_start();
-    if COMPARE_AFTER.iter().any(|w| after.starts_with(w)) {
+    if comparison_after(rest) {
         return true;
     }
     let expr: String = q[s.start..s.end].chars().filter(|c| !c.is_whitespace()).collect();
@@ -928,10 +953,15 @@ mod tests {
             "10억 원 예산", "전화번호 010-1234-5678", "1.5배 증가", "지난 봄철 점검", "지난가을운동회",
             // DEC-070: 견줌의 기준("전년 대비")·"이달의 ○○"(상 이름)·"당해 ○○"(그 ○○)은 날짜가 아니다.
             "전년 대비 매출", "전월 대비 입장객", "전분기 대비", "전년도 대비 실적", "전년대비 증가율", "전년比 증가",
-            "전월 비교 자료", "2025년 대비 실적", "작년 상반기 대비 매출", "이달의 우수 직원", "당해 사업", "당해 직원 징계",
+            "전월 비교 자료", "2025년 대비 실적",
+            // DEC-070(보탬): 동기·같은 기간·조사 + 대비/비교/비해 도 견줌이다. "연말 대비"(준비)는 DEC-070 대로 칩이 아니다.
+            "전년 동기 대비 매출", "전년 같은 기간 대비 실적", "전년에 비해 증가", "작년 동기 대비", "전월 대비 입장객", "연말 대비 계획", "작년 상반기 대비 매출", "이달의 우수 직원", "당해 사업", "당해 직원 징계",
         ] {
             none(q);
         }
+        // 견줌 낱말은 통째여야 한다 — "비교적"·"대비책"은 견줌이 아니라 날짜는 칩으로 남는다(DEC-070).
+        assert_eq!(one("올해 비교적 많은 민원", "2026-10-15").0, "올해");
+        assert_eq!(one("올해 대비책 마련", "2026-10-15").0, "올해");
         // 당해 + 연도·년도·년 은 날짜(당해연도 = 올해).
         for q in ["당해연도 예산", "당해 연도 예산", "당해년도 예산", "당해년 예산"] {
             let v = DateTable::builtin().find(q, day("2026-10-15"));

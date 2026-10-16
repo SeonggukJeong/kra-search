@@ -456,8 +456,8 @@ fn choose_split(w: &World, base: &Cfg, tune: &Tune) -> (Arm, Arm, bool) {
 
 /// 나누는 쪽 하강의 출발점(DEC-069): 문턱만 `SPLIT_START`. 제품 기본(0)에서 출발하면 모든 검색어가 의미형 칸([1])을 써서
 /// `w_semantic[키워드형]` 축이 효과가 없고, [0]·[1] 이 같으면 문턱 축도 효과가 없다 — 하강이 0 을 떠나지 못해 나눔과 안 나눔이
-/// 구조적으로 같아진다(최종 리뷰 I-1). 키워드 쪽 가중치 축은 따로 두지 않는다 — 가중 RRF 에서 순위를 바꾸는 것은 두 경로의 비율이라
-/// `w_semantic[키워드형]` 하나로 그 비율을 훑는다.
+/// 구조적으로 같아진다(최종 리뷰 I-1). 키워드 쪽 가중치 축은 따로 두지 않는다 — 날짜 칩이 없는 검색어에서는 순위를 바꾸는 것이 두 경로의 비율뿐이라
+/// `w_semantic[키워드형]` 하나로 그 비율을 훑는다(날짜·최신·구절 가산은 가중치 없이 더해지므로 칩이 있는 검색어는 비율만으로 정해지지 않는다).
 fn split_start(p: &HybridParams) -> HybridParams {
     HybridParams { keyword_max_chars: SPLIT_START, ..p.clone() }
 }
