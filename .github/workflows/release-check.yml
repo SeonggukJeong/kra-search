@@ -46,7 +46,7 @@ jobs:
           cp models/embeddinggemma-2-Q8_0.gguf "$OUT/models/"
           cp third_party/pdfium/win-x64/bin/pdfium.dll "$OUT/"
           mkdir -p "$OUT/licenses/pdfium" && cp -r third_party/pdfium/win-x64/LICENSE third_party/pdfium/win-x64/licenses/* "$OUT/licenses/pdfium/"
-          cp docs/check/README-check.txt docs/check/질의-예시.tsv "$OUT/"
+          cp docs/check/README-check.txt docs/check/query-example.tsv "$OUT/"
           ls -la "$OUT" "$OUT/models"
           7z a "$OUT.zip" "$OUT" > /dev/null
           sha256sum "$OUT.zip" > "$OUT.zip.sha256"

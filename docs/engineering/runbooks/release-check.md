@@ -3,7 +3,7 @@
 M2 완료 조건의 폐쇄망 확인(M2 설계 §7). 사용자가 반입해 업무 폴더를 색인하고 자기 질의로 `eval --queries` 를 돌려 보고서 하나를 반출한다. **잘못된 릴리즈는 사용자의 하루를 버리게 한다**(INC-006·009 와 같은 원칙).
 
 ## 태그 전 점검(INC-020)
-이 결과로 정할 것과 그 숫자가 보고서에 있는지 확인한다. 개발 PC 에서 시험 자료로 보고서를 직접 만들어 본다(`docs/check/질의-예시.tsv` 의 정답은 개발 PC 에 없는 파일이라 "찾지 못한 질의"만 나온다 — 대신 릴리즈 스모크와 같은 질의를 쓴다):
+이 결과로 정할 것과 그 숫자가 보고서에 있는지 확인한다. 개발 PC 에서 시험 자료로 보고서를 직접 만들어 본다(`docs/check/query-example.tsv` 의 정답은 개발 PC 에 없는 파일이라 "찾지 못한 질의"만 나온다 — 대신 릴리즈 스모크와 같은 질의를 쓴다):
 
 ```bash
 # 개발 PC 는 실행 파일 옆에 모델·pdfium 이 없다 — 직접 준다(mac-arm64 예, 다른 OS 는 third_party/pdfium/<os>/)
@@ -30,13 +30,14 @@ cargo run -p app --release -- "${K[@]}" eval --queries /tmp/kra-check-q.tsv --ou
 ## 절차
 1. 브랜치 CI(macOS·Windows·deny)가 통과했는지 확인. Windows 잡의 실모델 단계에 `app --test semantic`(패키지 전 명령줄 색인 → 의미 검색)과 `index --test bench_hybrid`(청크 50만 검색 코어 p95) 가 들어 있다.
 2. `git tag m2-check-N && git push origin m2-check-N` → `.github/workflows/release-check.yml` 이 Windows 에서 네트워크 0 검사(`tools/check-no-net.sh`)·빌드·패키지·스모크·프리릴리즈.
-   - zip: `kra-search.exe`, llama/ggml DLL 전부, VC++ 런타임 3개(INC-005), `models/embeddinggemma-2-Q8_0.gguf`, `pdfium.dll`, `licenses/pdfium/`, `README-check.txt`(원본 `docs/check/README-check.txt`), `질의-예시.tsv`.
+   - zip: `kra-search.exe`, llama/ggml DLL 전부, VC++ 런타임 3개(INC-005), `models/embeddinggemma-2-Q8_0.gguf`, `pdfium.dll`, `licenses/pdfium/`, `README-check.txt`(원본 `docs/check/README-check.txt`), `query-example.tsv`(질의 예시 — 오래된 압축 도구에서 한글 파일 이름이 깨지지 않게 ASCII 이름).
 3. 스모크 확인(패키지 폴더에서 인자 없이 — 모델·DLL·pdfium 은 실행 파일 옆): 워크플로 로그에서
    - `의미 검색: 빠른 …개`(모델·DLL 을 불러와 의미 검색 색인을 만들었다),
    - 검색 결과의 `korean.pdf`(pdfium)·`뜻이 비슷함`(의미 경로),
    - `eval --queries` 를 `--out` 없이 돌려 `kra-search-eval-report.txt` 가 생기고 `찾지 못한 질의 0개`(폴더 붙인 정답 `office\utf8.txt` 포함)·`날짜 표현 있는 질의 1개`,
    - 보고서(파일·화면)에 검색어 낱말·파일 이름·폴더 이름·경로가 없음 — 모두 스텝이 실패로 끝낸다.
    - 로그의 보고서 `[색인] 처리 속도` 를 이전 릴리즈와 비교해 크게 느리면(수 배) 최적화 빠짐을 의심한다(INC-006).
+   - **첫 릴리즈(m2-check-1)는 비교할 이전 값이 없다** — 그래서 릴리즈 이력 표에 그 행의 기준값을 반드시 남긴다: 스모크 보고서의 `처리 속도`(빠른·정밀 개/초)와 `걸린 시간`·`색인 스레드`, `의미 검색: 빠른 n개 · 정밀 m개`, `검색 p50·p95`, zip SHA-256. 다음 릴리즈부터 이 행과 비교한다(러너 코어 수가 다르면 그것도 적는다).
 4. 사용자에게 전달: 릴리즈 링크, zip SHA-256, `README-check.txt` 요약(색인 → 질의 20~30줄(날짜가 "쓴 때"·"내용 기간" 둘 다, 같은 이름 파일은 폴더 붙이기) → `eval --queries` → 보고서 하나 반출 + 내용 기간 질의 줄 번호, 이어서 색인했으면 그 사실).
 5. 결과는 `docs/m2/results.md` "폐쇄망 확인" 절에 기록하고(보고서 원본은 `eval/downloads/m2-check-N/`, 커밋하지 않음), 개발 PC 결과와 크게 다르면 매개변수를 다시 정할지 사용자와 정한다.
 6. 불량 릴리즈는 지우지 말고 릴리즈 노트 맨 위에 "사용 금지 — 이유, 대체 릴리즈"(DEC-019).
