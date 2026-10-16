@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use vector::record::Layout;
-use vector::store::{read_each, VecFile};
+use vector::store::{read_each, StoreError, VecFile};
 
 pub const LAYOUT: Layout = Layout::M0;
 /// 죽은 슬롯이 이 비율을 넘으면 실행 끝에 압축한다.
@@ -96,7 +96,20 @@ fn remove_stale(root: &Path, dir: &Path, gens: &[(VecKind, u64)]) {
     }
 }
 
-/// 색인용으로 연다. 지문이 다르거나 파일이 짧거나 형식이 다르면 벡터만 비우고 새로 만든다(키워드·meta 내용은 그대로).
+/// 벡터 파일을 열지 못했을 때 다시 만들 것인가(INC-023): 형식이 다름·짧음(손상)과 파일 없음(유실)만. 공유 위반·권한·일시적인
+/// 디스크 오류 같은 그 밖의 입출력 오류에 다시 만들면 저사양 PC 에서 몇 시간의 임베딩을 버린다(KI-041) — 단계만 실패시킨다.
+fn rebuilds(e: &StoreError) -> bool {
+    match e {
+        StoreError::BadHeader | StoreError::Short { .. } => true,
+        StoreError::Io(x) => x.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// 벡터 파일을 열지 못했다는 한 줄(INC-023). 키워드 색인은 이미 끝났고 벡터·meta 는 그대로다.
+pub const VEC_OPEN_FAILED: &str = "의미 검색 색인 파일을 열지 못했습니다 — 다른 프로그램이 쓰는 중인지 확인 후 다시 index";
+
+/// 색인용으로 연다. 지문이 다르거나 파일이 짧거나 형식이 다르거나 없으면 벡터만 비우고 새로 만든다(키워드·meta 내용은 그대로).
+/// 그 밖의 입출력 오류는 `VEC_OPEN_FAILED` 로 돌려준다 — 벡터·meta 를 건드리지 않는다(INC-023).
 pub fn open_for_write(home: &Home, meta: &mut Meta, fp: &str) -> Result<VecStore, IndexError> {
     let root = home.vectors_dir();
     let dir = root.join(fp);
@@ -111,6 +124,10 @@ pub fn open_for_write(home: &Home, meta: &mut Meta, fp: &str) -> Result<VecStore
         }
         let chunks = files.pop().expect("2개");
         let cards = files.pop().expect("2개");
+        // 손상·유실이 아닌 오류가 하나라도 있으면 아무것도 지우지 않고 이 단계만 실패한다(INC-023).
+        if let Some(e) = [cards.as_ref().err(), chunks.as_ref().err()].into_iter().flatten().find(|e| !rebuilds(e)) {
+            return Err(IndexError::Other(format!("{VEC_OPEN_FAILED} ({e})")));
+        }
         match (cards, chunks) {
             (Ok(cards), Ok(chunks)) => {
                 remove_stale(&root, &dir, &gens);
@@ -315,6 +332,41 @@ mod tests {
         assert_eq!(vs.cards.len(), 0);
         assert_eq!(m.card_todo().unwrap().len(), 2, "카드를 다시 만든다");
         assert_eq!(m.counts().unwrap().contents, 2, "meta 내용은 그대로");
+    }
+
+    /// INC-023: 파일을 열지 못한 것(다른 프로그램이 잡고 있음·권한 등)은 손상이 아니다 — 벡터를 지우지 않고 의미 검색 단계만 실패한다.
+    /// 파일 자리에 폴더를 두어 형식 확인 전에 열기가 실패하게 한다(Unix 는 EISDIR, Windows 는 접근 거부 — 둘 다 Io).
+    #[test]
+    fn io_error_keeps_vectors_and_fails_the_stage() {
+        let (_d, home, mut m, a, b) = setup();
+        let mut vs = open_for_write(&home, &mut m, "fp").unwrap();
+        vs.cards.append(&[rec(1.0), rec(2.0)]).unwrap();
+        m.set_cards(&[(a, Some(0)), (b, Some(1))], 2).unwrap();
+        drop(vs);
+        let cards = file_path(&home.vectors_dir().join("fp"), VecKind::Cards, 0);
+        let saved = std::fs::read(&cards).unwrap();
+        std::fs::remove_file(&cards).unwrap();
+        std::fs::create_dir(&cards).unwrap();
+        let e = open_for_write(&home, &mut m, "fp").err().expect("열지 못하면 실패");
+        assert!(e.to_string().contains("의미 검색 색인 파일을 열지 못했습니다"), "{e}");
+        assert_eq!(m.live_slots(VecKind::Cards).unwrap().len(), 2, "meta 의 벡터 기록은 그대로");
+        assert!(m.card_todo().unwrap().is_empty(), "다시 만들 카드 없음");
+        assert!(cards.is_dir(), "파일 자리를 건드리지 않는다");
+        // 원인이 풀리면 다음 실행은 그대로 이어서 연다.
+        std::fs::remove_dir(&cards).unwrap();
+        std::fs::write(&cards, saved).unwrap();
+        assert_eq!(open_for_write(&home, &mut m, "fp").unwrap().cards.len(), 2);
+    }
+
+    /// 손상(형식·짧음)과 유실(파일 없음)만 다시 만든다. 그 밖의 입출력 오류는 다시 만들지 않는다(INC-023).
+    #[test]
+    fn only_damage_or_loss_rebuilds() {
+        use vector::store::StoreError;
+        assert!(rebuilds(&StoreError::BadHeader));
+        assert!(rebuilds(&StoreError::Short { have: 1, want: 2 }));
+        assert!(rebuilds(&StoreError::Io(std::io::ErrorKind::NotFound.into())));
+        assert!(!rebuilds(&StoreError::Io(std::io::ErrorKind::PermissionDenied.into())));
+        assert!(!rebuilds(&StoreError::Io(std::io::Error::other("공유 위반"))));
     }
 
     /// Review Focus 5: index 가 파일에 덧붙였지만 meta 에 아직 기록하지 않은 꼬리는 검색이 읽지 않는다.
