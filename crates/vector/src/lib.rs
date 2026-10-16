@@ -1,6 +1,8 @@
 //! 임베딩 벡터 연산: MRL 축소·정규화, int8 양자화, 이진 부호 비트.
 
 pub mod flat;
+pub mod record;
+pub mod store;
 
 /// 앞쪽 `dim`개만 남기고 L2 정규화한다. 차원이 부족하거나 비유한값·0벡터면 `None`.
 pub fn truncate_normalize(v: &[f32], dim: usize) -> Option<Vec<f32>> {

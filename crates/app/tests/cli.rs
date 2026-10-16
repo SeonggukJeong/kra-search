@@ -49,6 +49,8 @@ impl Env {
         let out = Command::new(env!("CARGO_BIN_EXE_kra-search"))
             .arg("--home").arg(self.home.path())
             .arg("--pdfium").arg(pdfium)
+            // 개발 PC 의 target/release/models/ 에 실제 모델이 있어도 늘 키워드만 쓰게(실모델은 따로 본다).
+            .arg("--model").arg(self.home.path().join("모델없음.gguf"))
             .args(args)
             .output()
             .unwrap();
@@ -311,4 +313,21 @@ fn locked_file_is_skipped_then_indexed_later() {
     e.index();
     let r = e.run(&["search", "잠금시험표지"]);
     assert!(r.contains("잠긴문서.txt"), "{r}");
+}
+
+#[test]
+fn date_chip_is_shown_and_now_is_validated() {
+    let e = Env::new();
+    e.index();
+    let r = e.run(&["search", "--now", "2026-10-15", "작년", "렛츠런파크"]);
+    assert!(r.contains("📅 작년 → 2025-01-01 ~ 2025-12-31"), "{r}");
+    let r = e.run_fail(&["search", "--now", "2026-13-01", "렛츠런파크"]);
+    assert!(r.contains("YYYY-MM-DD"), "{r}");
+}
+
+#[test]
+fn zero_threads_is_rejected() {
+    let e = Env::new();
+    let r = e.run_fail(&["--threads", "0", "status"]);
+    assert!(r.contains("--threads"), "{r}");
 }

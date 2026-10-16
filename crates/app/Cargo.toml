@@ -13,10 +13,20 @@ extract = { path = "../extract" }
 index = { path = "../index" }
 crawler = { path = "../crawler" }
 platform = { path = "../platform" }
+embed = { path = "../embed" }
+vector = { path = "../vector" }
+doc = { path = "../doc" }
+query = { path = "../query" }
+serde_json.workspace = true
+# 평가 세트(`kra-search eval --set`): manifest.toml 읽기와 복사본 SHA-256 확인. 이미 작업 공간에 있는 크레이트(m0eval·diag).
+serde.workspace = true
+toml = "0.9"
+sha2 = "0.11"
+unicode-normalization = "0.1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
-serde_json.workspace = true
 # 시험에서 meta.db 의 행을 직접 망가뜨리는 데만 쓴다(index 와 같은 SQLCipher 빌드).
 rusqlite = { version = "0.40", default-features = false, features = ["bundled-sqlcipher-vendored-openssl"] }

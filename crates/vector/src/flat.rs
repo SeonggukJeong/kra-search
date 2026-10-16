@@ -1,5 +1,6 @@
 //! 평면(flat) 벡터 저장소: int8 정밀 스캔 + 이진 후보 선별 후 재계산.
 
+use crate::record::{Layout, Record};
 use crate::{asym_score, dot_i8, hamming, quantize_i8, sign_bits, truncate_normalize};
 
 pub struct FlatIndex {
@@ -27,20 +28,25 @@ impl FlatIndex {
 
     /// 원본 차원 벡터를 추가한다. 차원 부족·0벡터면 추가하지 않고 false.
     pub fn push(&mut self, full: &[f32]) -> bool {
-        if full.len() < self.dim.max(self.bit_dim) {
-            return false;
+        match Record::from_full(full, Layout { dim: self.dim, bit_dim: self.bit_dim }) {
+            Some(r) => {
+                self.push_record(&r);
+                true
+            }
+            None => false,
         }
-        let (Some(v), Some(b)) = (truncate_normalize(full, self.dim), truncate_normalize(full, self.bit_dim)) else {
-            return false;
-        };
-        let (c, s) = quantize_i8(&v);
-        self.codes.extend_from_slice(&c);
-        self.inv_scales.push(s);
-        self.bits.extend_from_slice(&sign_bits(&b));
-        true
     }
 
-    fn code(&self, i: usize) -> &[i8] {
+    /// 이미 만든 레코드(디스크에서 읽은 것)를 추가한다. 차원이 다르면 패닉 — 부르는 쪽 Layout 오류.
+    pub fn push_record(&mut self, r: &Record) {
+        assert_eq!((r.codes.len(), r.bits.len()), (self.dim, self.words), "레코드 차원이 색인과 다름");
+        self.codes.extend_from_slice(&r.codes);
+        self.inv_scales.push(r.inv_scale);
+        self.bits.extend_from_slice(&r.bits);
+    }
+
+    /// `i` 번째 슬롯의 int8 코드(앞 `dim` 차원). 평가의 일치 검사가 제품 저장 벡터와 평가 벡터를 같은 양자화로 견줄 때 쓴다(DEC-059).
+    pub fn code(&self, i: usize) -> &[i8] {
         &self.codes[i * self.dim..(i + 1) * self.dim]
     }
 

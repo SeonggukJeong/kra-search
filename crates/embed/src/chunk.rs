@@ -13,13 +13,22 @@ pub struct ChunkParams {
 /// 진단(kra-diag)과 앱(M2)이 같은 값을 쓴다 — 크기를 바꾸면 진단 수치도 함께 바뀐다(DEC-045).
 pub const BODY_CHUNK: ChunkParams = ChunkParams { target_tokens: 300, max_tokens: 400, max_chunks: 2000 };
 
-/// `text`를 토큰 한도 이하가 되도록 글자 경계에서 자른다(이진 탐색).
+/// `text`를 토큰 한도 이하가 되도록 글자 경계에서 자른다. 앞에서부터 창(한도 × 4글자, 모자라면 두 배씩)만 세고
+/// 그 안에서 이진 탐색한다 — 15만 자 한 문단에서 매번 글 전체를 토큰화하던 문제(KI-001).
 fn cut_to(text: &str, max_tokens: usize, count: &dyn Fn(&str) -> usize) -> String {
-    if count(text) <= max_tokens {
-        return text.to_string();
-    }
     let idx: Vec<usize> = text.char_indices().map(|(i, _)| i).chain([text.len()]).collect();
-    let (mut lo, mut hi) = (0usize, idx.len() - 1);
+    let n = idx.len() - 1;
+    let mut w = (max_tokens.max(1) * 4).min(n);
+    loop {
+        if count(&text[..idx[w]]) > max_tokens {
+            break;
+        }
+        if w == n {
+            return text.to_string();
+        }
+        w = (w * 2).min(n);
+    }
+    let (mut lo, mut hi) = (0usize, w);
     while lo < hi {
         let mid = (lo + hi).div_ceil(2);
         if count(&text[..idx[mid]]) <= max_tokens {
@@ -31,7 +40,7 @@ fn cut_to(text: &str, max_tokens: usize, count: &dyn Fn(&str) -> usize) -> Strin
     text[..idx[lo]].to_string()
 }
 
-/// 제목 + 소제목들 + 첫 문단, 토큰 ≤ max_tokens. 내용이 없으면 None.
+/// 제목 + 소제목들 + 첫 문단(없으면 첫 표 머리글·첫 행), 토큰 ≤ max_tokens. 내용이 없으면 None.
 pub fn build_card(doc: &Document, max_tokens: usize, count: &dyn Fn(&str) -> usize) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if let Some(t) = doc.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
@@ -45,8 +54,16 @@ pub fn build_card(doc: &Document, max_tokens: usize, count: &dyn Fn(&str) -> usi
             }
         }
     }
-    if let Some(p) = doc.blocks.iter().find(|b| b.kind == BlockKind::Paragraph && !b.text.trim().is_empty()) {
-        parts.push(p.text.trim().to_string());
+    match doc.blocks.iter().find(|b| b.kind == BlockKind::Paragraph && !b.text.trim().is_empty()) {
+        Some(p) => parts.push(p.text.trim().to_string()),
+        // 문단이 없으면(표·시트) 첫 표 머리글과 첫 행으로 대신한다(DEC-057).
+        None => {
+            for kind in [BlockKind::TableHeader, BlockKind::TableRow] {
+                if let Some(b) = doc.blocks.iter().find(|b| b.kind == kind && !b.text.trim().is_empty()) {
+                    parts.push(b.text.trim().to_string());
+                }
+            }
+        }
     }
     if parts.is_empty() {
         return None;
@@ -60,11 +77,11 @@ fn split_long(text: &str, max: usize, count: &dyn Fn(&str) -> usize) -> Vec<Stri
     let mut out = Vec::new();
     let mut rest = text.trim();
     while !rest.is_empty() {
-        if count(rest) <= max {
+        let head = cut_to(rest, max, count);
+        if head.len() == rest.len() {
             out.push(rest.to_string());
             break;
         }
-        let head = cut_to(rest, max, count);
         let mut cut = head.rfind(['.', '\n']).map(|i| i + 1).filter(|i| *i > head.len() / 2).unwrap_or(head.len());
         if cut == 0 {
             // 한도가 글자 하나보다 작아도 반드시 앞으로 나아간다(무한 반복 방지).
@@ -76,16 +93,29 @@ fn split_long(text: &str, max: usize, count: &dyn Fn(&str) -> usize) -> Vec<Stri
     out
 }
 
+/// 본문 청크와 "소제목으로 시작하는가" 표시(목차·소제목 청크를 먼저 임베딩, 스펙 §6.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chunk {
+    pub text: String,
+    pub heading: bool,
+}
+
 /// 구조 기반 청크. 표가 이어지는 청크에는 표 머리글을 다시 붙인다. 최대 max_chunks개.
 pub fn build_chunks(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usize) -> Vec<String> {
-    let mut chunks: Vec<String> = Vec::new();
+    build_chunks_marked(doc, p, count).into_iter().map(|c| c.text).collect()
+}
+
+pub fn build_chunks_marked(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usize) -> Vec<Chunk> {
+    let mut chunks: Vec<Chunk> = Vec::new();
     let mut cur: Vec<String> = Vec::new();
+    let mut cur_heading = false;
     let mut table_header: Option<String> = None;
-    let flush = |cur: &mut Vec<String>, chunks: &mut Vec<String>| {
+    let flush = |cur: &mut Vec<String>, cur_heading: &mut bool, chunks: &mut Vec<Chunk>| {
         if cur.iter().any(|s| !s.trim().is_empty()) {
-            chunks.push(cur.join("\n"));
+            chunks.push(Chunk { text: cur.join("\n"), heading: *cur_heading });
         }
         cur.clear();
+        *cur_heading = false;
     };
     for b in &doc.blocks {
         let text = b.text.trim();
@@ -94,16 +124,17 @@ pub fn build_chunks(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usi
         }
         match b.kind {
             BlockKind::Heading => {
-                flush(&mut cur, &mut chunks);
+                flush(&mut cur, &mut cur_heading, &mut chunks);
                 table_header = None;
                 cur.push(text.to_string());
+                cur_heading = true;
             }
             BlockKind::TableHeader => {
-                flush(&mut cur, &mut chunks);
+                flush(&mut cur, &mut cur_heading, &mut chunks);
                 // 반복해서 붙일 머리글은 한도의 1/3 이내로 줄인다. 원래 머리글이 길면 그 전문은 따로 청크로 남긴다.
                 let short = cut_to(text, p.max_tokens / 3, count);
                 if short.len() < text.len() {
-                    chunks.extend(split_long(text, p.max_tokens, count));
+                    chunks.extend(split_long(text, p.max_tokens, count).into_iter().map(|t| Chunk { text: t, heading: false }));
                 }
                 if short.trim().is_empty() {
                     table_header = None;
@@ -120,7 +151,7 @@ pub fn build_chunks(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usi
                 for piece in split_long(text, p.max_tokens.saturating_sub(reserve).max(1), count) {
                     let candidate = if cur.is_empty() { piece.clone() } else { format!("{}\n{}", cur.join("\n"), piece) };
                     if !cur.is_empty() && count(&candidate) > p.target_tokens {
-                        flush(&mut cur, &mut chunks);
+                        flush(&mut cur, &mut cur_heading, &mut chunks);
                         if let (BlockKind::TableRow, Some(h)) = (&b.kind, &table_header) {
                             cur.push(h.clone());
                         }
@@ -133,7 +164,7 @@ pub fn build_chunks(doc: &Document, p: &ChunkParams, count: &dyn Fn(&str) -> usi
             break;
         }
     }
-    flush(&mut cur, &mut chunks);
+    flush(&mut cur, &mut cur_heading, &mut chunks);
     chunks.truncate(p.max_chunks);
     chunks
 }
@@ -235,5 +266,36 @@ mod tests {
     fn max_chunks_caps_output() {
         let d = Document { title: None, blocks: (0..50).map(|_| b(Paragraph, &"가".repeat(100))).collect() };
         assert_eq!(build_chunks(&d, &ChunkParams { target_tokens: 100, max_tokens: 120, max_chunks: 7 }, &chars).len(), 7);
+    }
+
+    #[test]
+    fn marked_chunks_know_heading_starts() {
+        let d = Document { title: None, blocks: vec![b(Paragraph, "앞"), b(Heading, "Ⅱ. 원인"), b(Paragraph, "뒤")] };
+        let c = build_chunks_marked(&d, &ChunkParams { target_tokens: 100, max_tokens: 120, max_chunks: 10 }, &chars);
+        assert_eq!(c, vec![Chunk { text: "앞".into(), heading: false }, Chunk { text: "Ⅱ. 원인\n뒤".into(), heading: true }]);
+        assert_eq!(build_chunks(&d, &ChunkParams { target_tokens: 100, max_tokens: 120, max_chunks: 10 }, &chars), vec!["앞", "Ⅱ. 원인\n뒤"]);
+    }
+
+    /// KI-001: 15만 자 한 문단을 자를 때 매번 글 전체를 세지 않는다(창 안에서만 센다).
+    #[test]
+    fn huge_paragraph_is_cut_inside_a_window() {
+        let text = "가나다라마바사아자차 ".repeat(15_000);
+        let d = Document { title: None, blocks: vec![b(Paragraph, &text)] };
+        let longest = std::cell::Cell::new(0usize);
+        let count = |s: &str| {
+            longest.set(longest.get().max(s.len()));
+            s.chars().count() + 2
+        };
+        let t = std::time::Instant::now();
+        let c = build_chunks(&d, &BODY_CHUNK, &count);
+        assert!(c.len() > 300, "{}", c.len());
+        assert!(longest.get() < 20_000, "센 글이 너무 김: {}바이트", longest.get());
+        assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn card_uses_table_header_and_first_row_without_paragraphs() {
+        let d = Document { title: None, blocks: vec![b(TableHeader, "번호 | 사업장"), b(TableRow, "번호: 1 | 사업장: 서울"), b(TableRow, "번호: 2 | 사업장: 제주")] };
+        assert_eq!(build_card(&d, 1000, &chars).unwrap(), "번호 | 사업장\n번호: 1 | 사업장: 서울");
     }
 }

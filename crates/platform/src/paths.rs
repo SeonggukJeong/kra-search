@@ -34,6 +34,10 @@ impl Home {
     pub fn keyword_dir(&self) -> PathBuf {
         self.data().join("tantivy")
     }
+    /// 의미 검색 벡터(임베딩 지문별 폴더, DEC-047)
+    pub fn vectors_dir(&self) -> PathBuf {
+        self.data().join("vectors")
+    }
     pub fn meta_db(&self) -> PathBuf {
         self.data().join("meta.db")
     }
@@ -53,6 +57,7 @@ mod tests {
         let h = super::Home::new("/r");
         assert!(h.meta_db().starts_with(h.data()));
         assert!(h.keyword_dir().starts_with(h.data()));
+        assert!(h.vectors_dir().starts_with(h.data()));
         assert!(h.meta_key().starts_with(h.keys()));
         assert!(!h.keys().starts_with(h.data()), "키는 data 밖(data 를 지워도 남음)");
         assert!(!h.lock_file().starts_with(h.data()), "잠금 파일은 data 밖");

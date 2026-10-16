@@ -154,7 +154,9 @@ pub fn diff(scanned: &[Scanned], known: &HashMap<String, (u64, i64)>, keep_under
         .filter(|s| known.get(&s.path) != Some(&(s.size, s.mtime_ns)))
         .cloned()
         .collect();
-    changed.sort_by_key(|s| std::cmp::Reverse(s.mtime_ns)); // 최근 수정 먼저
+    // 최근 수정 먼저, 같으면 경로 문자열 오름차순(바이트 순). 처리 순서대로 내용 id 가 매겨지고 검색 코어는 점수가 같으면
+    // id 로 가르므로, 같은 시각 파일의 순서가 훑은 순서(파일 시스템마다 다름)에 따라 바뀌지 않게 한다(P2, 일치 검사 DEC-052).
+    changed.sort_by(|a, b| b.mtime_ns.cmp(&a.mtime_ns).then_with(|| a.path.cmp(&b.path)));
     let seen: HashSet<&str> = scanned.iter().map(|s| s.path.as_str()).collect();
     let mut removed: Vec<String> = known
         .keys()
@@ -368,6 +370,22 @@ mod tests {
         let d = diff(&scanned, &known, &[PathBuf::from("/usb"), PathBuf::from("/a/locked")]);
         assert_eq!(d.changed.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(), vec!["/a/new.hwp", "/a/edited.hwp"]);
         assert_eq!(d.removed, vec!["/a/gone.hwp".to_string()]);
+    }
+
+    /// 수정 시각이 같으면 경로 오름차순 — 훑은 순서(파일 시스템마다 다름)와 무관하게 같은 순서(P2).
+    #[test]
+    fn diff_breaks_mtime_ties_by_path() {
+        let s = |p: &str, t: i64| Scanned { path: p.into(), size: 1, mtime_ns: t };
+        let scanned = vec![s("/r/public/나.hwp", 5), s("/r/kra/가.hwp", 5), s("/r/public/가.hwp", 5), s("/r/data/z.csv", 9), s("/r/data/a.csv", 1)];
+        let mut rev = scanned.clone();
+        rev.reverse();
+        for input in [scanned, rev] {
+            let d = diff(&input, &HashMap::new(), &[]);
+            assert_eq!(
+                d.changed.iter().map(|x| x.path.as_str()).collect::<Vec<_>>(),
+                vec!["/r/data/z.csv", "/r/kra/가.hwp", "/r/public/가.hwp", "/r/public/나.hwp", "/r/data/a.csv"]
+            );
+        }
     }
 
     #[test]
