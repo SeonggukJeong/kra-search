@@ -1,5 +1,5 @@
 //! 날짜 표현 → 기간(스펙 §8.1, DEC-053). 낱말은 데이터 표(`dates.tsv`, 바깥 파일 덧붙이기 가능), 숫자 꼴은 코드에서 읽는다.
-//! 규칙: 연도 없는 달·분기·반기·계절은 "기준 시점에 이미 시작한 가장 최근 것". 미래 표현은 칩이 아니다(range = None).
+//! 규칙: 연도 없는 달·날짜·달의 초·중·말·분기·반기·계절은 "기준 시점에 이미 시작한 가장 최근 것"(INC-022). 미래 표현은 칩이 아니다(range = None).
 //! 경계: 표현 앞은 글자가 아니어야 하고(앞 표현에 바로 붙은 경우는 허용), 뒤는 글자가 아니거나 조사·이어지는 시기여야 한다
 //! — "연말정산"·"지난 주민설명회"·"올림픽"을 날짜로 읽지 않으려고.
 
@@ -678,6 +678,8 @@ type Resolved = (Option<Range>, Relativity, Precision);
 fn resolve(g: &[Hit], today: Day) -> Option<Resolved> {
     let vague = g.iter().any(|h| h.precision == Precision::Vague);
     let (mut abs, mut anchor, mut range, mut month) = (false, None::<i32>, None::<Range>, None::<(i32, u32)>);
+    // 달의 해를 추정했는가(연도 없는 달) — 그 뒤의 초·중·말이 아직 오지 않았으면 한 해 앞으로(INC-022).
+    let mut month_guessed = false;
     let latest_month = |m: u32| -> (i32, u32) {
         let (ty, tm, _) = to_ymd(today);
         if m <= tm {
@@ -699,14 +701,28 @@ fn resolve(g: &[Hit], today: Day) -> Option<Resolved> {
                 abs |= a;
                 let (yy, mm) = match y.or(anchor) {
                     Some(y) => (y, m),
-                    None => latest_month(m),
+                    None => {
+                        month_guessed = true;
+                        latest_month(m)
+                    }
                 };
                 month = Some((yy, mm));
                 range = Some(Range::month(yy, mm));
             }
             Atom::MonthDay { y, m, d, abs: a } => {
                 abs |= a;
-                let yy = y.or(anchor).unwrap_or_else(|| latest_month(m).0);
+                let yy = match y.or(anchor) {
+                    Some(y) => y,
+                    None => {
+                        // 연도 없는 날짜 = 가장 가까운 지난 그날(DEC-053, INC-022): 이번 달이어도 아직 오지 않은 날이면 작년.
+                        let yy = latest_month(m).0;
+                        if d >= 1 && d <= days_in_month(yy, m) && from_ymd(yy, m, d) > today {
+                            yy - 1
+                        } else {
+                            yy
+                        }
+                    }
+                };
                 if d == 0 || d > days_in_month(yy, m) {
                     return None;
                 }
@@ -717,7 +733,11 @@ fn resolve(g: &[Hit], today: Day) -> Option<Resolved> {
             Atom::Season(s) => range = Some(anchored(anchor, today, |y| Range::months(y, s.start_month(), 3))),
             Atom::YearPart(p) => range = Some(anchored(anchor, today, |y| year_part(y, p))),
             Atom::MonthPart(p) => match (month, anchor) {
-                (Some((y, m)), _) => range = Some(month_part(y, m, p)),
+                (Some((y, m)), _) => {
+                    let r = month_part(y, m, p);
+                    // "10월 말"(10월 15일 기준): 이번 달의 말은 아직 시작하지 않았다 — 지난해 10월 말(INC-022).
+                    range = Some(if month_guessed && r.start > today { month_part(y - 1, m, p) } else { r });
+                }
                 (None, Some(y)) => range = Some(year_part(y, p)),
                 (None, None) => return None,
             },
@@ -845,6 +865,27 @@ mod tests {
         assert_eq!(one("겨울 폭설", "2026-12-05"), ("겨울".into(), "2026-12-01".into(), "2027-02-28".into()));
         assert_eq!(one("연말연시 근무", "2026-10-15"), ("연말연시".into(), "2025-12-01".into(), "2026-01-31".into()));
         assert_eq!(one("하반기 계획", "2026-03-02").1, "2025-07-01", "아직 오지 않은 하반기는 작년 것");
+    }
+
+    /// INC-022: 연도 없는 날짜·달의 초·중·말도 "가장 가까운 지난 것"(DEC-053) — 달만 비교하면 이번 달의 아직 오지 않은 날이 칩이 됐다.
+    #[test]
+    fn yearless_month_day_and_month_part_are_never_future() {
+        let t = "2026-10-15";
+        for (q, expr, a, b) in [
+            ("10월 20일 회의", "10월 20일", "2025-10-20", "2025-10-20"),
+            ("10월 말 보고", "10월 말", "2025-10-21", "2025-10-31"),
+            ("10월 하순 보고", "10월 하순", "2025-10-21", "2025-10-31"),
+            ("10월 중순 행사", "10월 중순", "2026-10-11", "2026-10-20"),
+            ("10월 15일 공문", "10월 15일", "2026-10-15", "2026-10-15"),
+            ("10월 초 행사", "10월 초", "2026-10-01", "2026-10-10"),
+            ("9월 30일 공문", "9월 30일", "2026-09-30", "2026-09-30"),
+        ] {
+            assert_eq!(one(q, t), (expr.to_string(), a.to_string(), b.to_string()), "{q}");
+        }
+        // 해를 적었거나("올"·"올해") 해가 정해진 표현은 그대로 — 사용자가 고른 해다.
+        assert_eq!(one("올해 10월 말 보고", t).1, "2026-10-21");
+        // 지난해의 그날이 없으면(윤일) 날짜가 아니다.
+        assert!(DateTable::builtin().find("2월 29일 공문", day("2029-02-10")).is_empty());
     }
 
     #[test]
