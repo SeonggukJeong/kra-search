@@ -45,3 +45,4 @@ cargo run -p app --release -- "${K[@]}" eval --queries /tmp/kra-check-q.tsv --ou
 ## 릴리즈 이력
 | 태그 | 상태 | 비고 |
 |---|---|---|
+| `m2-check-1` | 사용 가능(프리릴리즈) — 2026-10-16 | 커밋 0a833cd · zip SHA-256 c93b069bed7ff5b316a6d24c8d10dff620c1ac55b5f904b4c9ea2333f9c2a060 · 첫 릴리즈 기준값(GitHub windows-latest 러너, 성능 코어 2 · 효율 코어 0 · 논리 코어 4, 의미 검색 스레드 2) · 스모크: 의미 검색 빠른 30개 · 정밀 102개 · 걸린 시간 키워드 0.5초 · 빠른 5.1초 · 정밀 53.7초 · 처리 속도 빠른 5.9개/초 · 정밀 1.9개/초 · 검색 p50 48ms · p95 95ms · 모델 불러오기 879ms · 스모크 질의 정답 순위 2·2·15(macOS 4스레드에서는 1·1·13 — 거의 같은 시험 파일(utf8·utf16 변형)끼리의 순서 차이, KI-050) · 릴리즈 https://github.com/SeonggukJeong/kra-search/releases/tag/m2-check-1 |
