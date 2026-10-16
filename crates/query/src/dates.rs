@@ -208,7 +208,9 @@ impl DateTable {
             }
             i += 1;
         }
-        group(q, &cs, &hits, today)
+        let mut spans = group(q, &cs, &hits, today);
+        spans.retain(|s| !idiom_context(q, s));
+        spans
     }
 
     fn word(&self, cs: &[(usize, char)], i: usize, today: Day, prev: Option<Atom>) -> Option<Hit> {
@@ -256,6 +258,24 @@ pub fn title_years(text: &str) -> Vec<i32> {
     ys.sort_unstable();
     ys.dedup();
     ys
+}
+
+/// 날짜 표현 바로 뒤(공백 무시)에 오면 그 표현을 날짜로 읽지 않는 견줌 낱말(DEC-070). "전년 대비 매출"·"전월比"·"2025년 대비 실적"은
+/// 견줌의 기준이지 문서를 쓴 때가 아니다 — 표의 낱말과 숫자 꼴 모두에 같게 적용한다(표에 무엇을 더해도).
+const COMPARE_AFTER: &[&str] = &["대비", "比", "비교"];
+
+/// 바로 뒤에 붙으면 날짜가 아닌 (표현, 뒤 글자) — "이달의 우수 직원"(상 이름, DEC-070).
+const NOT_DATE_BEFORE: &[(&str, &str)] = &[("이달", "의")];
+
+/// 칩으로 만들지 않을 맥락인가(DEC-070). 빠진 표현은 검색어에 그대로 남는다.
+fn idiom_context(q: &str, s: &DateSpan) -> bool {
+    let rest = &q[s.end..];
+    let after = rest.trim_start();
+    if COMPARE_AFTER.iter().any(|w| after.starts_with(w)) {
+        return true;
+    }
+    let expr: String = q[s.start..s.end].chars().filter(|c| !c.is_whitespace()).collect();
+    NOT_DATE_BEFORE.iter().any(|(e, next)| expr == *e && rest.starts_with(next))
 }
 
 /// 조사 p 가 j 에서 시작하고, 그 뒤가 끝이거나 글자가 아니다.
@@ -906,9 +926,22 @@ mod tests {
             "전달 사항 정리", "전주 출장 보고", "당일 출장", "전일 근무", "연말정산 서류", "지난 주민설명회 자료",
             "올림픽 지원", "봄철 산불 대책", "가을운동회", "말 복지 규정", "경주마 초과 출전", "이사회 의결",
             "10억 원 예산", "전화번호 010-1234-5678", "1.5배 증가", "지난 봄철 점검", "지난가을운동회",
+            // DEC-070: 견줌의 기준("전년 대비")·"이달의 ○○"(상 이름)·"당해 ○○"(그 ○○)은 날짜가 아니다.
+            "전년 대비 매출", "전월 대비 입장객", "전분기 대비", "전년도 대비 실적", "전년대비 증가율", "전년比 증가",
+            "전월 비교 자료", "2025년 대비 실적", "작년 상반기 대비 매출", "이달의 우수 직원", "당해 사업", "당해 직원 징계",
         ] {
             none(q);
         }
+        // 당해 + 연도·년도·년 은 날짜(당해연도 = 올해).
+        for q in ["당해연도 예산", "당해 연도 예산", "당해년도 예산", "당해년 예산"] {
+            let v = DateTable::builtin().find(q, day("2026-10-15"));
+            assert_eq!(v.len(), 1, "{q}: {v:?}");
+            assert_eq!(v[0].range.map(|r| format_ymd(r.start)), Some("2026-01-01".to_string()), "{q}");
+        }
+        // 견줌 낱말이 날짜 앞에 있거나 떨어져 있으면 날짜는 그대로 칩이다(금주는 칩으로 둔다 — DEC-070).
+        assert_eq!(one("작년 매출 대비 실적", "2026-10-15").0, "작년", "대비가 날짜 바로 뒤가 아님");
+        assert_eq!(one("이달 행사", "2026-10-15").0, "이달");
+        assert_eq!(one("금주 캠페인", "2026-10-15").0, "금주");
     }
 
     #[test]

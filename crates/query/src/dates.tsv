@@ -2,14 +2,17 @@
 # 종류: year(해 오프셋) · year_bound(올 — 뒤에 시기가 붙을 때만) · month_rel · week_rel(월요일 시작) · day_rel · quarter_rel · quarter(n)
 #       half(1|2) · year_part(early|mid|late|whole|turn) · season(spring|summer|autumn|winter)
 #       month_part(early|mid|late — 달·해 바로 뒤에서만) · this_month_part(early|late) · window(며칠 전부터,며칠 전까지) · future(칩 아님)
-# 넣지 않은 낱말(일상어와 겹침): 전달(전하다)·전주(지명)·전일(온종일)·당일(그날). 바깥 파일로 같은 형식의 줄을 덧붙일 수 있다.
+# 넣지 않은 낱말(일상어와 겹침): 전달(전하다)·전주(지명)·전일(온종일)·당일(그날)·당해 단독("당해 사업" = 그 사업 — 당해연도·당해년도·당해년만, DEC-070).
+# 바깥 파일로 같은 형식의 줄을 덧붙일 수 있다.
+# 표 밖 맥락 규칙(dates.rs, DEC-070): 어느 표현이든 바로 뒤(공백 무시)가 대비·比·비교 면 날짜가 아니다("전년 대비"). "이달의"(상 이름)도 아니다.
+# 금주(이번 주)는 금주(술을 끊음)와 겹치지만 둔다 — 평가 질의(T025)가 쓰는 표현이라(DEC-070).
 # "지난 봄·여름·가을·겨울"(가장 최근에 끝난 계절)은 표로 표현할 수 없어 코드(dates.rs numeric)에서 읽는다.
 올해	year	0	exact
 금년	year	0	exact
 금년도	year	0	exact
-당해	year	0	exact
 당해연도	year	0	exact
 당해년도	year	0	exact
+당해년	year	0	exact
 작년	year	-1	exact
 지난해	year	-1	exact
 전년	year	-1	exact
