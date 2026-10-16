@@ -30,6 +30,10 @@ const EPS: f64 = 0.005;
 const MAX_PASSES: usize = 10;
 /// 유형을 나누는 쪽의 문턱 후보. 나누지 않는 쪽(0)은 따로 하강해 견준다(사용자 결정 2026-10-15).
 const SPLIT_ARM: [usize; 3] = [6, 8, 10];
+/// 나누는 쪽 하강의 출발 문턱(DEC-069) — `query::KEYWORD_MAX_CHARS` 와 같은 8.
+const SPLIT_START: usize = 8;
+/// 나누는 쪽의 키워드형 의미 가중치(`w_semantic[0]`) 후보.
+const KW_SEMANTIC_AXIS: [f64; 5] = [0.25, 0.5, 1.0, 1.5, 2.0];
 
 pub struct HArgs {
     pub model: PathBuf,
@@ -358,7 +362,7 @@ fn axes(split_arm: bool) -> Vec<(&'static str, Vec<(String, Setter)>)> {
     let mut v = vec![ax("rrf_k", &[10.0, 20.0, 30.0, 45.0, 60.0], |p, x| p.rrf_k = x)];
     if split_arm {
         v.push(ax("keyword_max_chars", &SPLIT_ARM, |p, x| p.keyword_max_chars = x));
-        v.push(ax("w_semantic[키워드형]", &[0.25, 0.5, 1.0, 1.5, 2.0], |p, x| p.w_semantic[0] = x));
+        v.push(ax("w_semantic[키워드형]", &KW_SEMANTIC_AXIS, |p, x| p.w_semantic[0] = x));
     }
     v.extend([
         ax("w_semantic[의미형]", &[0.5, 1.0, 1.5, 2.0, 3.0], |p, x| p.w_semantic[1] = x),
@@ -437,7 +441,7 @@ fn descend(w: &World, base: &Cfg, tune: &Tune, split_arm: bool) -> Arm {
 /// 나누는 쪽이 `accepts`(조정용 매크로 +EPS 넘게, 첫 페이지 적중 줄지 않음)로 이길 때만 나눈다. 아니면 0 쪽의 값 전체를 쓴다.
 /// 반환: (나누는 쪽, 나누지 않는 쪽, 나누는 쪽을 골랐는가)
 fn choose_split(w: &World, base: &Cfg, tune: &Tune) -> (Arm, Arm, bool) {
-    let split = descend(w, base, tune, true);
+    let split = descend(w, &Cfg { params: split_start(&base.params), ..base.clone() }, tune, true);
     // 0 쪽은 키워드형 가중치를 의미형과 같게 두고 출발한다(효과는 없지만 보고서·params.json 에 쓰지 않는 값이 남지 않게).
     let mut p0 = HybridParams { keyword_max_chars: 0, ..base.params.clone() };
     p0.w_semantic[0] = p0.w_semantic[1];
@@ -448,6 +452,14 @@ fn choose_split(w: &World, base: &Cfg, tune: &Tune) -> (Arm, Arm, bool) {
     zero.params.w_keyword[0] = zero.params.w_keyword[1];
     let win = accepts(split.score, split.hits, zero.score, zero.hits);
     (split, zero, win)
+}
+
+/// 나누는 쪽 하강의 출발점(DEC-069): 문턱만 `SPLIT_START`. 제품 기본(0)에서 출발하면 모든 검색어가 의미형 칸([1])을 써서
+/// `w_semantic[키워드형]` 축이 효과가 없고, [0]·[1] 이 같으면 문턱 축도 효과가 없다 — 하강이 0 을 떠나지 못해 나눔과 안 나눔이
+/// 구조적으로 같아진다(최종 리뷰 I-1). 키워드 쪽 가중치 축은 따로 두지 않는다 — 가중 RRF 에서 순위를 바꾸는 것은 두 경로의 비율이라
+/// `w_semantic[키워드형]` 하나로 그 비율을 훑는다.
+fn split_start(p: &HybridParams) -> HybridParams {
+    HybridParams { keyword_max_chars: SPLIT_START, ..p.clone() }
 }
 
 /// 날짜 표현 빼기 결정(DEC-051): 종류마다 조정용 temporal 로 견준다. 차이가 EPS 이내면 기본값, 빼는 쪽이 EPS 넘게 높고
@@ -610,7 +622,7 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
     let semantic_only = |c: Combine| Cfg { params: HybridParams { w_keyword: [0.0, 0.0], combine: c, date_exact: 0.0, date_vague: 0.0, recency: 0.0, phrase: 0.0, ..params.clone() }, ..chosen.clone() };
     let no_date = Cfg { params: HybridParams { date_exact: 0.0, date_vague: 0.0, ..params.clone() }, ..chosen.clone() };
     let runs: Vec<(&str, Cfg)> = vec![
-        ("키워드 단독(M2 경로)", keyword_only.clone()),
+        ("키워드 단독(M1 방식: 날짜 가산·빼기 없음)", keyword_only.clone()),
         ("카드 단독", semantic_only(Combine::CardOnly)),
         ("청크 단독(없으면 카드)", semantic_only(Combine::ChunkElseCard)),
         ("하이브리드(고른 값)", chosen.clone()),
@@ -635,7 +647,7 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
     writeln!(s, "## 결정 규칙(숫자로만, DEC-051)\n").unwrap();
     writeln!(s, "- 값은 조정용 질의(qid 해시, 유형마다 60%)로만 고르고, 합격 판정은 검증용(40%)으로만 한다. 목표 = 조정용 유형별 매크로 nDCG@10. \"참고(전체)\" 숫자는 판정에 쓰지 않는다.").unwrap();
     writeln!(s, "- 좌표 하강: 한 축씩 후보를 견줘, 조정용 매크로 nDCG@10 이 지금보다 {EPS} 넘게 높고 **조정용 첫 페이지 적중 수가 줄지 않는** 후보 중 가장 높은 것으로 바꾼다. 한 회차를 다 돌아 바뀐 것이 없으면 멈춘다(상한 {MAX_PASSES}회차).").unwrap();
-    writeln!(s, "- 유형 나누기(keyword_max_chars): 나누는 쪽(문턱 6·8·10)과 나누지 않는 쪽(0)을 각각 좌표 하강으로 끝까지 고른 뒤, 나누는 쪽이 같은 채택 규칙(+{EPS} 넘게, 첫 페이지 적중 줄지 않음)으로 이길 때만 나눈다. 아니면 0 쪽의 값 전체를 쓰고 키워드형 가중치([0])는 의미형([1])과 같게 둔다.").unwrap();
+    writeln!(s, "- 유형 나누기(keyword_max_chars): 나누는 쪽(문턱 6·8·10, 문턱 {SPLIT_START} 에서 출발 — DEC-069)과 나누지 않는 쪽(0)을 각각 좌표 하강으로 끝까지 고른 뒤, 나누는 쪽이 같은 채택 규칙(+{EPS} 넘게, 첫 페이지 적중 줄지 않음)으로 이길 때만 나눈다. 아니면 0 쪽의 값 전체를 쓰고 키워드형 가중치([0])는 의미형([1])과 같게 둔다.").unwrap();
     writeln!(s, "- 날짜 표현 빼기: 종류마다 조정용 temporal 로 견줘, 차이가 {EPS} 이내면 기본값, 빼는 쪽이 {EPS} 넘게 높고 첫 페이지 적중이 줄지 않으면 뺀다, 그 밖에는 빼지 않는다.").unwrap();
     writeln!(s, "- 카드 상한 128(결정 #27): 128에서 잘리는 카드(문서 기준)가 25% 미만이면 판단 불가(256), 조정용 전체 nDCG −0.003 이하 또는 마사회 유형 −0.01 이하 하락이면 256, 아니면 128.").unwrap();
     writeln!(s, "- 데이터 뒷부분(본문 ③): 켰을 때 조정용 데이터 아닌 질의 매크로가 0.3%p 이상 떨어지면 기본 끔 안을 사용자에게 올린다.\n").unwrap();
@@ -729,7 +741,7 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
         let cells: Vec<String> = kinds.iter().map(|k| kind_mean(&per[i], &all, k).map_or("-".into(), |x| format!("{x:.4}"))).collect();
         writeln!(s, "| {name} | {:.4} | {:.4} | {} | {} | {} |", macro_ndcg(&per[i], tune), macro_ndcg(&per[i], hold), pct(fp_rate(&per[i], tune)), pct(fp_rate(&per[i], hold)), cells.join(" | ")).unwrap();
     }
-    writeln!(s, "\n- \"키워드 단독(M2 경로)\"은 제품에서 모델이 없을 때의 경로(검색어 벡터 없음, 날짜 보정 끔)다. `docs/m1/eval-keyword.md` 와 값이 다른 까닭: 파일 이름에 `(id)` 가 붙은 평가 복사본 이름을 쓰고, 추출 제목이 없어 매니페스트 제목으로 채웠던 문서의 제목을 비워 제품처럼 파일 이름을 쓴다.").unwrap();
+    writeln!(s, "\n- \"키워드 단독(M1 방식)\"은 검색어 벡터 없음 · 날짜 가산 끔 · 날짜 표현 빼기 끔(M1 동작)이다. 제품에서 모델이 없을 때의 경로와는 다르다 — 그 경로는 날짜 가산과 상대 표현 빼기를 그대로 쓴다(DEC-064 (4)). `docs/m1/eval-keyword.md` 와 값이 다른 까닭: 파일 이름에 `(id)` 가 붙은 평가 복사본 이름을 쓰고, 추출 제목이 없어 매니페스트 제목으로 채웠던 문서의 제목을 비워 제품처럼 파일 이름을 쓴다.").unwrap();
     writeln!(s).unwrap();
 
     writeln!(s, "## 3. 고른 매개변수\n\n```json\n{}\n```\n", serde_json::to_string_pretty(&params).expect("json")).unwrap();
@@ -738,8 +750,23 @@ pub fn run(w: &World, queries: &[Query], fixed: Option<Saved>) -> Outcome {
         Some((split, zero, win)) => {
             writeln!(s, "### 3.1 유형 나누기 — 나누는 쪽 vs 나누지 않는 쪽(0)\n").unwrap();
             writeln!(s, "| 갈래 | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|").unwrap();
-            arm_row(&mut s, &format!("나눔(하강이 고른 {}자)", split.params.keyword_max_chars), &split.params, w, &base, tune, hold);
+            let wt = |p: &HybridParams| format!("w_semantic [{}, {}] · w_keyword [{}, {}]", p.w_semantic[0], p.w_semantic[1], p.w_keyword[0], p.w_keyword[1]);
+            arm_row(&mut s, &format!("나눔(하강이 고른 {}자 · {})", split.params.keyword_max_chars, wt(&split.params)), &split.params, w, &base, tune, hold);
             arm_row(&mut s, "나누지 않음(0)", &zero.params, w, &base, tune, hold);
+            let same = split.params.w_semantic[0] == split.params.w_semantic[1] && split.params.w_keyword[0] == split.params.w_keyword[1];
+            writeln!(
+                s,
+                "\n- 나누는 쪽은 문턱 {SPLIT_START} 에서 출발해 문턱과 키워드형 가중치(`w_semantic[0]`)를 함께 훑는다(DEC-069). 가중치 칸 [0]·[1] 이 같으면 유형이 점수에 영향을 주지 않아 아래 6·8·10 칸은 **구조적으로 같다**(측정이 아님). {}",
+                if same { "이번 하강이 고른 [0]·[1] 이 같다 — 조정용에서 키워드형 가중치를 달리해 이득을 본 값이 없었다는 뜻이고, 아래 문턱 칸이 같은 것은 그 결과다." } else { "이번 하강은 [0]·[1] 을 다르게 골랐다 — 아래 문턱 칸의 차이가 문턱의 효과다." }
+            )
+            .unwrap();
+            // 키워드형 가중치 후보(하강의 축과 같은 값) — "어떤 가중치도 이득이 없었다"를 숫자로 보인다(DEC-069).
+            writeln!(s, "\n나누는 쪽이 고른 값에서 키워드형 가중치 `w_semantic[0]` 만 바꾼 값(문턱 {}자, 고르는 것은 조정용만):\n\n| w_semantic[0] | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|", split.params.keyword_max_chars).unwrap();
+            for x in KW_SEMANTIC_AXIS {
+                let mut p = split.params.clone();
+                p.w_semantic[0] = x;
+                arm_row(&mut s, &format!("{x}"), &p, w, &base, tune, hold);
+            }
             writeln!(s, "\n나누는 쪽의 다른 문턱(나머지 값은 나누는 쪽 그대로, 참고):\n\n| 문턱 | 매크로 nDCG@10(조정) | 첫 페이지(조정) | 매크로 nDCG@10(검증) | 첫 페이지(검증) |\n|---|---|---|---|---|").unwrap();
             for n in SPLIT_ARM {
                 arm_row(&mut s, &format!("{n}자"), &HybridParams { keyword_max_chars: n, ..split.params.clone() }, w, &base, tune, hold);
@@ -1157,6 +1184,17 @@ mod tests {
         assert_eq!(tset, ids.iter().map(String::as_str).collect::<HashSet<&str>>());
         assert!(h.0.iter().all(|x| !tset.contains(x.qid.as_str())), "검증용이 조정용에 섞이지 않는다");
         assert_eq!(t.0.len() + h.0.len(), qs.len());
+    }
+
+    /// DEC-069: 나누는 쪽은 문턱 8 에서 출발한다 — 0(제품 기본)에서 출발하면 키워드형 가중치 축이 효과가 없고, 가중치가 같으면
+    /// 문턱 축도 효과가 없어 하강이 0 을 떠나지 못한다(나눔 = 안 나눔이 구조적으로 같아짐).
+    #[test]
+    fn split_arm_starts_at_a_live_threshold() {
+        let d = HybridParams::default();
+        let s = split_start(&d);
+        assert_eq!(s.keyword_max_chars, 8);
+        assert!(SPLIT_ARM.contains(&s.keyword_max_chars));
+        assert_eq!(HybridParams { keyword_max_chars: d.keyword_max_chars, ..s }, d, "문턱 말고는 기본값 그대로");
     }
 
     /// 나누는 쪽은 문턱 6·8·10(0 없음), 나누지 않는 쪽은 문턱·키워드형 가중치 축이 없다.
