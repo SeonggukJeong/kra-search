@@ -1,6 +1,7 @@
 //! M0 개발 PC 평가 실행기. 결과는 마크다운 표로 저장한다.
 
 mod cache;
+mod compare;
 mod corpus;
 mod experiments;
 mod hybrid;
@@ -47,10 +48,28 @@ struct Args {
     /// 일치 검사가 제품 저장 벡터를 읽을 평가 색인 폴더(`kra-search --home`)
     #[arg(long, default_value = "target/eval-home")]
     eval_home: PathBuf,
+    /// 외부 순위 파일 채점: `이름=순위.json`(여러 번). 문서 추출 없이 질의만 읽어 --out(필수)에 표를 쓴다.
+    #[arg(long)]
+    compare: Vec<String>,
 }
 
 fn main() {
     let a = Args::parse();
+    if !a.compare.is_empty() {
+        let queries: Vec<_> = a.eval.iter().flat_map(|d| corpus::load_queries(d)).collect();
+        let runs: Vec<(String, compare::Ranks)> = a
+            .compare
+            .iter()
+            .map(|c| {
+                let (name, path) = c.split_once('=').expect("--compare 이름=순위.json");
+                (name.to_string(), serde_json::from_str(&std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"))).expect("순위 JSON"))
+            })
+            .collect();
+        let out = a.out.clone().expect("--compare 에는 --out 이 필요합니다");
+        std::fs::write(&out, compare::report(&queries, &runs)).unwrap();
+        eprintln!("저장: {}", out.display());
+        return;
+    }
     let (mut docs, mut failed, mut queries) = (Vec::new(), Vec::new(), Vec::new());
     for dir in &a.eval {
         let (d, f) = corpus::load_docs(dir);
