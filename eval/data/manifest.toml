@@ -1,0 +1,385 @@
+# 데이터 형식 방해 문서(합성). 원본은 저장소에 넣지 않는다 — `python3 tools/eval/make_data_set.py` 로 다시 만든다.
+
+[[doc]]
+id = "D0001"
+title = "2024년 민원 접수 현황 01"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "e7930a50b956e58cfa0a9c8b0a542730abb534120e09533e2d1c9b92df148252"
+ext = "csv"
+date = "2025-02-19"
+
+[[doc]]
+id = "D0002"
+title = "2024년 민원 접수 현황 02"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "48988fd731bf97a6ca2316bd4afcef58bc7effd441e6555ff82dc585c564529e"
+ext = "csv"
+date = "2024-12-31"
+
+[[doc]]
+id = "D0003"
+title = "2025년 민원 접수 현황 03"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "98605188ed7e7bf5b9c4da24e66325476b7d329b490376bac6921d1aebdef688"
+ext = "csv"
+date = "2026-02-04"
+
+[[doc]]
+id = "D0004"
+title = "2024년 민원 접수 현황 04"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "49c6992dc1cc52820e53571459795ed95c1cc0b5836db67a2efa1969d52b074a"
+ext = "csv"
+date = "2024-10-30"
+
+[[doc]]
+id = "D0005"
+title = "2024년 민원 접수 현황 05"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "9d2d7244bb00d87d5376a0e111510010ef8c9be6a01cff08f109c12d1db54cb5"
+ext = "csv"
+date = "2025-07-01"
+
+[[doc]]
+id = "D0006"
+title = "2024년 민원 접수 현황 06"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "d6bb3433a0788773e919d95aca376ddc07ab778dbf04b19203df00b31e93b742"
+ext = "csv"
+date = "2025-02-07"
+
+[[doc]]
+id = "D0007"
+title = "2026년 민원 접수 현황 07"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "af338cd4065ffc945e8303f0d66e602372e8d7bec9dd3dd2cdaeda2ebdd510aa"
+ext = "csv"
+date = "2026-09-05"
+
+[[doc]]
+id = "D0008"
+title = "2025년 민원 접수 현황 08"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "b6408dadb3dd6c183d57fb4b1ab274ed7c502b48ad67dc499f3756dfe7526923"
+ext = "csv"
+date = "2025-08-31"
+
+[[doc]]
+id = "D0009"
+title = "2025년 민원 접수 현황 09"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "55dde491f591ac79c6434fe04152b8894c6921b4965122ec74d600bd3742b1cb"
+ext = "csv"
+date = "2025-08-20"
+
+[[doc]]
+id = "D0010"
+title = "2024년 민원 접수 현황 10"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "304984a662a7ecd5292345ee5a1253de5d44e595bc65e20417ba6a905fdd98ab"
+ext = "csv"
+date = "2024-09-07"
+
+[[doc]]
+id = "D0011"
+title = "2024년 민원 접수 현황 11"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "7d3cba6f7db527f0131f0b5736901c8edfb49d6af4290b711fb4513f42850859"
+ext = "csv"
+date = "2024-08-10"
+
+[[doc]]
+id = "D0012"
+title = "2024년 민원 접수 현황 12"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "b4edc158198f53cab7a78a72f933ee4a9ee3ba526cfa0ee9574593002ac43376"
+ext = "csv"
+date = "2025-07-13"
+
+[[doc]]
+id = "D0013"
+title = "2025년 민원 접수 현황 13"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "17b337c410129c4e9a5aad391ae628dc73c55ef47b3a6ba867498502fc260a09"
+ext = "csv"
+date = "2025-08-18"
+
+[[doc]]
+id = "D0014"
+title = "2025년 민원 접수 현황 14"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "b1adf9fcd5d9d1ccd0c18e056b460613489c40914b1b0c6a180318cc8fd34a64"
+ext = "csv"
+date = "2025-11-10"
+
+[[doc]]
+id = "D0015"
+title = "2025년 민원 접수 현황 15"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "5933cd5bc8ff1cae737d435cdc24d0879c443d22ebd5174bebda1ef37d96c6e2"
+ext = "csv"
+date = "2026-01-20"
+
+[[doc]]
+id = "D0016"
+title = "2024년 민원 접수 현황 16"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "80fd13de8843c95e6181309c0cabd8560c17f492bb2ca9b225140ce4c1baf1a3"
+ext = "csv"
+date = "2025-07-05"
+
+[[doc]]
+id = "D0017"
+title = "2025년 시설 점검 기록 01"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "f79bcff055761f585dea83a199e8f97309c69771dca2e1cbc71f181b8a5c3eb1"
+ext = "xlsx"
+date = "2026-05-07"
+
+[[doc]]
+id = "D0018"
+title = "2025년 시설 점검 기록 02"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "e76f1690bc5f907d945adde9fdb02fc7b2e2bad310be382a3f76df15b91c3428"
+ext = "xlsx"
+date = "2026-07-01"
+
+[[doc]]
+id = "D0019"
+title = "2024년 시설 점검 기록 03"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "5c1f6c57634a474c62c366d6a57c291cab509d709d589ed795256a3ccac18b73"
+ext = "xlsx"
+date = "2025-06-24"
+
+[[doc]]
+id = "D0020"
+title = "2025년 시설 점검 기록 04"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "908bd472dbec4519d249d5ad95c13971dd62ffd4dc63bcb7bdd364e8c74c3a69"
+ext = "xlsx"
+date = "2026-04-02"
+
+[[doc]]
+id = "D0021"
+title = "2024년 시설 점검 기록 05"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "60786df303426d243394482b362b505c632c989a1ff12fb262e5078da2863835"
+ext = "xlsx"
+date = "2025-06-26"
+
+[[doc]]
+id = "D0022"
+title = "2025년 시설 점검 기록 06"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "41170b12bf88e7306cb827ce16be4a856d70742bcce2814422b2a2609404faea"
+ext = "xlsx"
+date = "2026-02-22"
+
+[[doc]]
+id = "D0023"
+title = "2024년 시설 점검 기록 07"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "ec757a91426bccdaacf2327086a38ac393bc55bfc8aa97a22c542830d72d7f52"
+ext = "xlsx"
+date = "2025-04-13"
+
+[[doc]]
+id = "D0024"
+title = "2024년 시설 점검 기록 08"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "46c2e9278c214de654b14d991066656b0834f5f60f76deae893769ce2fc931be"
+ext = "xlsx"
+date = "2024-11-08"
+
+[[doc]]
+id = "D0025"
+title = "2025년 시설 점검 기록 09"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "c9136f307b815305d42bdba8710f1743ac317faac1d7e3c3a4c8bb6ca5fea58f"
+ext = "xlsx"
+date = "2025-08-23"
+
+[[doc]]
+id = "D0026"
+title = "2025년 시설 점검 기록 10"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "1468109a68d1ff500634da39b4dd9154a0d38a55a3ef2129a097bf2fd90dacb2"
+ext = "xlsx"
+date = "2026-04-05"
+
+[[doc]]
+id = "D0027"
+title = "2024년 시설 점검 기록 11"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "004a7e74e931487266414d5cdcccd6c3dc2b628fe3c2a1710529ee44667d1b99"
+ext = "xlsx"
+date = "2024-08-18"
+
+[[doc]]
+id = "D0028"
+title = "2024년 시설 점검 기록 12"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "1fa5dea03e1242d0877936a94f8bf485b6b942d426b071ab812986e53d564f97"
+ext = "xlsx"
+date = "2025-06-22"
+
+[[doc]]
+id = "D0029"
+title = "2024년 시설 점검 기록 13"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "b3d5cdcc64ed6224e86a21ff52f57d58b9b9d7bf4241f94ff4ec49603b109069"
+ext = "xlsx"
+date = "2025-01-24"
+
+[[doc]]
+id = "D0030"
+title = "2025년 시설 점검 기록 14"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "0f23daf87466f06027228a571fbb5d18204d5ac376143ea5a57db5809cf8c3e9"
+ext = "xlsx"
+date = "2025-09-05"
+
+[[doc]]
+id = "D0031"
+title = "2026년 시설 점검 기록 15"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "0827d88cf2da4cd4dc65377f0109fd9d36d1ec4bc0a0053a7ca51509f3086672"
+ext = "xlsx"
+date = "2026-09-29"
+
+[[doc]]
+id = "D0032"
+title = "2026년 시설 점검 기록 16"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "e051a1e075d4ceed470766dcf7ffa76fe819285b639bde471cce51fa7956e4c4"
+ext = "xlsx"
+date = "2026-09-07"
+
+[[doc]]
+id = "D0033"
+title = "2024년 발매 시스템 운영 일지 01"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "066d286d72abe5433bcc3f555704932e91f7d924135056792d9b4a75808fd04c"
+ext = "txt"
+date = "2024-08-13"
+
+[[doc]]
+id = "D0034"
+title = "2026년 발매 시스템 운영 일지 02"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "115d5faadf03beb7d25a4eb92a4be834d6a7d699b7e9661a8806422ab79f135e"
+ext = "txt"
+date = "2026-10-06"
+
+[[doc]]
+id = "D0035"
+title = "2025년 발매 시스템 운영 일지 03"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "d2631c80e287c40fa5ac35199c32abddad1e9ad1d7ffe686415df016e032ede0"
+ext = "txt"
+date = "2026-02-10"
+
+[[doc]]
+id = "D0036"
+title = "2025년 발매 시스템 운영 일지 04"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "b84d8afd54315c34c064398466d17f3bb394badf0514c63a53e77c25cbe8635f"
+ext = "txt"
+date = "2025-12-18"
+
+[[doc]]
+id = "D0037"
+title = "2024년 발매 시스템 운영 일지 05"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "016b4351daf2931fb7008257221f5031dd7037d27e709679013f477e0a2206f8"
+ext = "txt"
+date = "2024-12-26"
+
+[[doc]]
+id = "D0038"
+title = "2025년 발매 시스템 운영 일지 06"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "297e1afd4817aa33cf3aa8144f123589072dd8217f0679c63a87168ea67861f7"
+ext = "txt"
+date = "2026-03-04"
+
+[[doc]]
+id = "D0039"
+title = "2025년 발매 시스템 운영 일지 07"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "657a5d039a3d72a2565ef096b2a094e226e87e3ecef3496673cf12401725db16"
+ext = "txt"
+date = "2026-02-06"
+
+[[doc]]
+id = "D0040"
+title = "2025년 발매 시스템 운영 일지 08"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "f96e8ce4299180db58b763c10e9c8dce02ac1e80608e3301b4f1aa5d5e899f99"
+ext = "txt"
+date = "2026-05-19"
+
+[[doc]]
+id = "D0041"
+title = "2024년 발매 시스템 운영 일지 09"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "d8128b03d4833a160baf0b989eb4e10fb4efceb29cecaa1e99f6a4761d3fc7e8"
+ext = "txt"
+date = "2025-04-22"
+
+[[doc]]
+id = "D0042"
+title = "2024년 발매 시스템 운영 일지 10"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "9a6dd3556f3baade557f2c05c8b5db5af83e9b7d604fb3eed2579f4950ad841b"
+ext = "txt"
+date = "2024-11-22"
+
+[[doc]]
+id = "D0043"
+title = "2025년 발매 시스템 운영 일지 11"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "45180d2aaaa07d66f2da2fc69e4e9b0ccfeff3e3c6acac1063b993111217d312"
+ext = "txt"
+date = "2026-05-08"
+
+[[doc]]
+id = "D0044"
+title = "2025년 발매 시스템 운영 일지 12"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "0d53aa00460362a0fb92aaf075b26c34811579543f0bf2afb067a3e6cea7c060"
+ext = "txt"
+date = "2026-07-15"
+
+[[doc]]
+id = "D0045"
+title = "2025년 발매 시스템 운영 일지 13"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "ade63acce6eb03767849d8f5151e10436023aef5a1b63b4a6f850a15cf5f5152"
+ext = "txt"
+date = "2026-03-09"
+
+[[doc]]
+id = "D0046"
+title = "2025년 발매 시스템 운영 일지 14"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "df4c963aaa620b258b401fb256096e4be5e0822d1867691f01af959ac8ae8c94"
+ext = "txt"
+date = "2026-01-28"
+
+[[doc]]
+id = "D0047"
+title = "2024년 발매 시스템 운영 일지 15"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "558d665a5c3f646ea4932c012a681ef77827330c52fe9d74970978aa202861d4"
+ext = "txt"
+date = "2024-08-08"
+
+[[doc]]
+id = "D0048"
+title = "2025년 발매 시스템 운영 일지 16"
+source = "합성(tools/eval/make_data_set.py, seed 20261015)"
+sha256 = "0997e52dab0f65f03e940ca48a1e0c3cdb60b431d347bc8ca0a2847bbc847e4c"
+ext = "txt"
+date = "2026-02-10"

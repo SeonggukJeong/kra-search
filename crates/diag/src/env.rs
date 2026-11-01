@@ -45,16 +45,9 @@ pub fn collect() -> EnvInfo {
     e
 }
 
-/// (성능 코어 수, 효율 코어 수). 하이브리드 CPU 가 아니면 효율 코어 0. Windows 에서만 잰다.
-#[cfg(windows)]
-pub fn core_split() -> Option<(usize, usize)> {
-    crate::env_windows::core_split()
-}
-
-#[cfg(not(windows))]
-pub fn core_split() -> Option<(usize, usize)> {
-    None
-}
+/// (성능 코어 수, 효율 코어 수). 판별은 `platform::cpu` 가 한다(제품의 임베딩 스레드 기본값과 같은 것).
+/// Windows 가 아니면 None.
+pub use platform::cpu::core_split;
 
 #[cfg(all(test, windows))]
 mod tests {

@@ -1,11 +1,12 @@
 # kra-search
 
 한국 공공기관(한국마사회 우선)용 Windows 로컬 문서 검색 프로그램. Rust + llama.cpp(EmbeddingGemma 2) + rhwp(HWP), UI 는 Tauri 2. 저사양 PC·폐쇄망·비전문 사용자 대상.
-설계: `docs/superpowers/specs/2026-10-12-kra-search-design.md` · UI: `docs/design/ui-decisions.md` · 현재 진행: `docs/m0/results.md`
+설계: `docs/superpowers/specs/2026-10-12-kra-search-design.md` · UI: `docs/design/ui-decisions.md` · 현재 진행: M2 설계 `docs/superpowers/specs/2026-10-15-m2-hybrid-search-design.md` (직전 결과 `docs/m1/results.md`)
 
 ## 반드시 지킬 것
 - **실행 중 네트워크 0.** HTTP 크레이트 금지 — 실행 의존 그래프 기준(`deny.toml` + `tools/check-no-net.sh`, 빌드 스크립트 전용 예외는 DEC-034). 사용자 문서는 PC 밖으로 나가지 않는다.
 - **진단 보고서(`kra-diag`)에는 문서 내용·경로·파일명·사용자명·컴퓨터명·파일 바이트를 남기지 않는다**(INC-010). 진단 도구는 PC 를 바꾸지 않는다(레지스트리·파일·인증서, DEC-022).
+- **`kra-search eval --queries` 보고서도 같다**: 질의 원문·정답 파일 이름·경로·문서 내용을 남기지 않는다(줄 번호와 지표만, `crates/app/tests/eval_queries.rs`).
 - 평가 문서 원본(`eval/public/docs/`, `eval/kra/docs/`, `eval/downloads/`)과 `*.gguf` 는 커밋하지 않는다.
 - UI 는 `docs/design/ui-decisions.md`(D1~D8)를 그대로 따른다. 바꾸려면 사용자 승인 후 그 문서의 변경 기록에 남긴다.
 - 커밋 이메일은 저장소 설정(`seongguk.dev@gmail.com`)을 쓴다. 문서·주석은 한국어.

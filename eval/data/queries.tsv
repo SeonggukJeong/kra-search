@@ -1,0 +1,13 @@
+qid	query	type	relevant
+X001	부경 주차장 밤에 불 꺼진 민원	data-deep	D0001
+X002	강남 지점 큰 화면 글씨 깨짐	data-head	D0004
+X003	분당 지점 승강기 문에 끼인 사고	data-deep	D0006
+X004	경주 끝난 말 데려가는 방법 문의	data-deep	D0012
+X005	대전 지점 식당 더럽다는 신고	data-head	D0015
+X006	제주 마구간 비 새서 공사한 기록	data-deep	D0019
+X007	광주 지점 수돗물 녹물 배관	data-head	D0023
+X008	서울 관람석 소화기 바꾼 점검	data-deep	D0026
+X009	말 실어 나르는 트럭 에어컨 고장	data-deep	D0031
+X010	지폐 투입 안 되는 발매기 수리	data-deep	D0034
+X011	일산 프린터 종이 걸려서 바꿈	data-head	D0040
+X012	제주 발매 통신 끊긴 장애 처리	data-deep	D0045

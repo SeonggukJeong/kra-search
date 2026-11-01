@@ -115,12 +115,21 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "crawler",
+ "doc",
+ "embed",
  "extract",
  "index",
  "platform",
+ "query",
  "rusqlite",
+ "serde",
  "serde_json",
+ "sha2",
  "tempfile",
+ "toml",
+ "unicode-normalization",
+ "vector",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -882,6 +891,7 @@ dependencies = [
  "doc",
  "embed",
  "extract",
+ "platform",
  "serde",
  "serde_json",
  "sha2",
@@ -1611,11 +1621,14 @@ version = "0.0.1"
 dependencies = [
  "doc",
  "lindera",
+ "query",
  "rusqlite",
+ "serde",
  "serde_json",
  "tantivy",
  "tempfile",
  "unicode-normalization",
+ "vector",
 ]
 
 [[package]]
@@ -1885,11 +1898,14 @@ checksum = "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e"
 name = "m0eval"
 version = "0.0.1"
 dependencies = [
+ "app",
  "clap",
  "doc",
  "embed",
  "extract",
  "index",
+ "platform",
+ "query",
  "serde",
  "serde_json",
  "toml",
@@ -2433,6 +2449,10 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "query"
+version = "0.0.1"
 
 [[package]]
 name = "quick-error"
@@ -3834,6 +3854,9 @@ dependencies = [
 [[package]]
 name = "vector"
 version = "0.0.1"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "version_check"

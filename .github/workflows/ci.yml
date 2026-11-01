@@ -27,9 +27,11 @@ jobs:
         run: bash tools/fetch-ko-dic.sh
       - name: libclang (windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
       - name: Strawberry Perl for vendored OpenSSL (windows)
         if: runner.os == 'Windows'
+        shell: pwsh
         run: echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> $env:GITHUB_ENV
       - run: cargo build --workspace --release
       - name: put llama DLLs next to binaries (windows)
@@ -65,6 +67,9 @@ jobs:
           cargo test -p embed --release --test model --test reference -- --include-ignored --test-threads 1
           # llama.cpp 로컬 패치(logits 버퍼 미할당)가 빠지면 메모리가 1GB 늘어 여기서 떨어진다 — INC-004
           cargo test -p diag --release --test memory -- --include-ignored --test-threads 1
+          # M2: 실제 모델로 색인 → 의미 검색(명령줄 그대로), 청크 50만 검색 코어 지연
+          cargo test -p app --release --test semantic -- --include-ignored --test-threads 1
+          cargo test -p index --release --test bench_hybrid -- --include-ignored --nocapture
   deny:
     runs-on: ubuntu-latest
     steps:

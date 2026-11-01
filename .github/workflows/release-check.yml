@@ -1,0 +1,99 @@
+name: release-check
+# 폐쇄망 품질 확인 릴리즈(M2 설계 §7) — 절차는 docs/engineering/runbooks/release-check.md
+on:
+  push:
+    tags: ["m2-check-*"]
+permissions: { contents: write }
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - name: fetch rhwp sources
+        shell: bash
+        run: bash tools/fetch-rhwp.sh
+      - name: fetch pdfium
+        shell: bash
+        run: bash tools/fetch-pdfium.sh win-x64
+      - name: fetch ko-dic
+        shell: bash
+        run: bash tools/fetch-ko-dic.sh
+      # 실행 중 네트워크 0(스펙 §7) — 배포할 실행 파일의 의존 그래프에 HTTP 크레이트가 없는지 패키지 전에 확인한다.
+      - name: no HTTP crates in runtime dependency graph
+        shell: bash
+        run: bash tools/check-no-net.sh
+      - name: libclang
+        shell: pwsh
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Strawberry Perl for vendored OpenSSL
+        shell: pwsh
+        run: echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl.exe" >> $env:GITHUB_ENV
+      - run: cargo build --release -p app
+      - name: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="kra-search-${GITHUB_REF_NAME}-win64"
+          mkdir -p "$OUT/models"
+          cp target/release/kra-search.exe "$OUT/"
+          find target/release/build -path '*llama-sys*' -name '*.dll' -exec cp {} "$OUT/" \;
+          # llama/ggml DLL이 쓰는 VC++ 런타임을 exe 옆에 둔다(앱 로컬 배포 — 별도 설치 불필요, INC-005)
+          for f in vcruntime140.dll vcruntime140_1.dll msvcp140.dll; do cp "/c/Windows/System32/$f" "$OUT/"; done
+          bash tools/fetch-models.sh
+          cp models/embeddinggemma-2-Q8_0.gguf "$OUT/models/"
+          cp third_party/pdfium/win-x64/bin/pdfium.dll "$OUT/"
+          mkdir -p "$OUT/licenses/pdfium" && cp -r third_party/pdfium/win-x64/LICENSE third_party/pdfium/win-x64/licenses/* "$OUT/licenses/pdfium/"
+          cp docs/check/README-check.txt docs/check/query-example.tsv "$OUT/"
+          ls -la "$OUT" "$OUT/models"
+          7z a "$OUT.zip" "$OUT" > /dev/null
+          sha256sum "$OUT.zip" > "$OUT.zip.sha256"
+          cat "$OUT.zip.sha256"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+      # zip 을 만든 뒤 패키지 폴더에서 사용자처럼 돌린다(인자 없이 — 모델·DLL·pdfium 은 실행 파일 옆에서 찾는다).
+      - name: smoke test (packaged build, default model and pdfium next to exe)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          KH="$RUNNER_TEMP/kh"
+          # 화면 그대로(표준 오류 포함)를 남긴다 — 아래에서 엔진 로그(KI-003)를 찾는다.
+          ./kra-search.exe --home "$KH" index --root "$GITHUB_WORKSPACE/crates/extract/tests/fixtures" 2>&1 | tee "$RUNNER_TEMP/index.txt"
+          # 모델·llama DLL 을 불러와 의미 검색 색인을 만들었다(못 불러오면 "키워드 검색만 준비" 로 이 줄이 없다).
+          grep -q "의미 검색: 빠른" "$RUNNER_TEMP/index.txt"
+          ./kra-search.exe --home "$KH" search 렛츠런파크 2>&1 | tee "$RUNNER_TEMP/search.txt"
+          # korean.pdf = 실행 파일 옆 pdfium 으로 본문을 읽었다, 뜻이 비슷함 = 의미 경로가 결과에 들어왔다.
+          grep -q "korean.pdf" "$RUNNER_TEMP/search.txt"
+          grep -q "뜻이 비슷함" "$RUNNER_TEMP/search.txt"
+          # 사용자 절차 그대로: 패키지 폴더의 질의 파일, --out 없이(기본 보고서 이름), 날짜 표현·폴더 붙인 정답 포함.
+          printf '질의\t정답\n렛츠런파크 운영 방안\tsample.docx\n작년 경마 시행 계획\toffice\\utf8.txt\n말 경주 시설 운영\tkorean.pdf\n' > 내질의.tsv
+          ./kra-search.exe --home "$KH" eval --queries 내질의.tsv 2>&1 | tee "$RUNNER_TEMP/eval-screen.txt"
+          R=kra-search-eval-report.txt
+          test -s "$R"
+          grep -q "nDCG@10" "$R"
+          grep -q "nDCG@10" "$RUNNER_TEMP/eval-screen.txt"
+          # 세 정답 모두 색인에서 찾았고(폴더 붙인 정답 포함, 같은 이름 없음), 날짜 표현 질의가 하나로 잡혔다.
+          grep -q "찾지 못한 질의 0개" "$R"
+          grep -q "정답 이름이 여러 파일과 맞은 질의(줄): 없음" "$R"
+          grep -qF "날짜 칩이 생긴 질의(미래 표현 제외) 1개" "$R"
+          # KI-003: ggml 의 "load_backend: loaded CPU backend from <실행 파일 폴더>" 같은 엔진 로그가 화면에 나오면 안 된다
+          # (폴더 경로에 사용자 이름이 들어 있을 수 있다). DLL 을 나눠 불러오는 Windows 패키지에서만 실제로 드러난다.
+          for f in index.txt search.txt eval-screen.txt; do
+            for log in load_backend llama_model_loader; do
+              if grep -qF -- "$log" "$RUNNER_TEMP/$f"; then echo "화면에 엔진 로그 '$log' 가 있다: $f"; exit 1; fi
+            done
+          done
+          # 보고서(파일·화면)에 검색어·파일 이름·경로가 없어야 한다.
+          # `! grep` 은 set -e 에서 실패로 멈추지 않는다 — if 로 직접 끝낸다.
+          for f in "$R" "$RUNNER_TEMP/eval-screen.txt"; do
+            for secret in 렛츠런파크 경마 경주 sample.docx korean.pdf utf8.txt office fixtures 내질의 "$KH" "$GITHUB_WORKSPACE"; do
+              if grep -qF -- "$secret" "$f"; then echo "보고서에 '$secret' 가 있다: $f"; exit 1; fi
+            done
+          done
+          echo "스모크 통과"
+      - name: release
+        env: { GH_TOKEN: "${{ github.token }}" }
+        shell: bash
+        run: gh release create "$GITHUB_REF_NAME" "$OUT.zip" "$OUT.zip.sha256" --prerelease --title "폐쇄망 품질 확인 $GITHUB_REF_NAME" --notes-file docs/check/README-check.txt
